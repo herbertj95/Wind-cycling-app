@@ -139,7 +139,7 @@ export default function GpxUploader({
       )}
 
       <div className="presets-section">
-        <span className="presets-title">Quick presets (cycling loops)</span>
+        <span className="presets-title">Quick presets (cFDycling loops)</span>
         <div className="presets-grid">
           {PRESET_ROUTES.map((preset) => {
             const isSelected = activeRoute?.id === preset.id;

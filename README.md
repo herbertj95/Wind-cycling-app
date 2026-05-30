@@ -1,6 +1,6 @@
 # 🚴‍♂️ Wind Cycling App
 
-**Lumina by Growin** - A premium, high-performance real-time wind and route analysis tool built specifically for cyclists in the Lisbon Metropolitan Area and beyond.
+A premium, high-performance real-time wind and route analysis tool built specifically for cyclists in the Lisbon Metropolitan Area and beyond.
 
 The application allows cyclists to upload GPX routes, cross-reference their exact geographical path against high-resolution Open-Meteo weather grids, and accurately predict tailwind boosts, crosswind sweep, and headwind resistance before they even clip into the pedals.
 
@@ -20,7 +20,7 @@ The application allows cyclists to upload GPX routes, cross-reference their exac
 
 * **Frontend Framework**: React 18 + Vite
 * **Map Engine**: Leaflet (`react-leaflet`) with high-contrast CartoDB dark tiles
-* **Data Integration**: 
+* **Data Integration**:
   * [Open-Meteo API](https://open-meteo.com) for ultra-high-resolution localized weather data.
   * Native GPX parsing (XML DOM extraction) for precise route plotting and coordinate interpolation.
 * **Styling**: Vanilla CSS utilizing custom Glassmorphism panels, CSS Grid/Flexbox architecture, and dynamic SVGs.
@@ -30,27 +30,29 @@ The application allows cyclists to upload GPX routes, cross-reference their exac
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
 
 ### Installation
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/herbertj95/Wind-cycling-app.git
    cd Wind-cycling-app
    ```
-
 2. **Install dependencies:**
+
    ```bash
    npm install
    ```
-
 3. **Start the development server:**
+
    ```bash
    npm run dev
    ```
-
 4. **Build for production:**
+
    ```bash
    npm run build
    ```
