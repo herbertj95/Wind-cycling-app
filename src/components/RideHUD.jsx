@@ -180,13 +180,8 @@ export default function RideHUD({
     windEffectLabel = "HEADWIND RESISTANCE";
     windEffectColor = "var(--color-dangerous)";
   } else if (windEffect === 'crosswind') {
-    if (weather.windSpeed > 15) {
-      windEffectLabel = "STRONG CROSSWIND DRIFT";
-      windEffectColor = "var(--color-dangerous)";
-    } else {
-      windEffectLabel = "MODERATE CROSSWIND";
-      windEffectColor = "var(--color-moderate)";
-    }
+    windEffectLabel = "CROSSWIND DRIFT";
+    windEffectColor = "var(--color-moderate)";
   } else if (windEffect === 'tailwind') {
     windEffectLabel = "TAILWIND BOOST!";
     windEffectColor = "var(--color-safe)";
