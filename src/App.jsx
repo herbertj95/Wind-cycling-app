@@ -28,18 +28,21 @@ export default function App() {
   // State for simulated rider HUD position
   const [simulatedState, setSimulatedState] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [forecastOffset, setForecastOffset] = useState(0);
 
-  // Fetch weather on mount
+  // Fetch weather when forecast offset changes
   useEffect(() => {
     async function loadWeather() {
       setIsLoading(true);
-      const data = await fetchLisbonGridWeather('live');
+      const data = await fetchLisbonGridWeather('live', forecastOffset);
       setGridWeather(data);
       setIsLoading(false);
     }
     loadWeather();
+  }, [forecastOffset]);
 
-    // Attempt to locate user automatically on mount
+  // Attempt to locate user automatically on mount
+  useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -239,9 +242,34 @@ export default function App() {
             <span>LOCATE ME</span>
           </button>
           
+          {/* Time Forecast Slider */}
+          <div className="forecast-slider-container glass-panel">
+            <span className="forecast-label">
+              {forecastOffset === 0 ? "NOW" : `+${forecastOffset}H`}
+            </span>
+            <input 
+              type="range" 
+              min="0" 
+              max="3" 
+              step="1" 
+              value={forecastOffset}
+              onChange={(e) => setForecastOffset(parseInt(e.target.value))}
+              className="forecast-slider"
+            />
+          </div>
+          
           <div className="live-header-status">
-            <span className="live-dot-pulse"></span>
-            <span className="live-status-text">LIVE REAL-TIME WIND</span>
+            {forecastOffset === 0 ? (
+              <>
+                <span className="live-dot-pulse"></span>
+                <span className="live-status-text">LIVE REAL-TIME WIND</span>
+              </>
+            ) : (
+              <>
+                <span className="live-dot-pulse" style={{ backgroundColor: 'var(--color-moderate)', animation: 'none', boxShadow: 'none' }}></span>
+                <span className="live-status-text" style={{ color: 'var(--color-moderate)' }}>FORECAST (+{forecastOffset} HRS)</span>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -997,6 +1025,53 @@ export default function App() {
           font-family: var(--font-mono);
           color: var(--text-muted);
           margin-top: -2px;
+        }
+        .forecast-slider-container {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 6px 14px;
+          border-radius: 20px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .forecast-label {
+          font-family: var(--font-mono);
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: var(--text-primary);
+          min-width: 32px;
+        }
+
+        .forecast-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100px;
+          height: 4px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 2px;
+          outline: none;
+          cursor: pointer;
+        }
+
+        .forecast-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: var(--color-safe);
+          cursor: pointer;
+          border: 2px solid #0a0c10;
+        }
+
+        .forecast-slider::-moz-range-thumb {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: var(--color-safe);
+          cursor: pointer;
+          border: 2px solid #0a0c10;
         }
       `}</style>
     </div>

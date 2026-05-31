@@ -186,7 +186,7 @@ const getMockWeather = (windPreset = 'nortada') => {
  * Fetches current weather values for the entire Lisbon grid from Open-Meteo
  * Fallback values are generated if API fails or rate-limits occur.
  */
-export async function fetchLisbonGridWeather(windPreset = 'live') {
+export async function fetchLisbonGridWeather(windPreset = 'live', hourOffset = 0) {
   // If the user selected a simulated planning pattern, skip live API query entirely
   if (windPreset !== 'live') {
     return getMockWeather(windPreset);
@@ -197,7 +197,7 @@ export async function fetchLisbonGridWeather(windPreset = 'live') {
     const latsParam = LISBON_GRID_POINTS.map(p => p.lat).join(',');
     const lngsParam = LISBON_GRID_POINTS.map(p => p.lng).join(',');
     
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latsParam}&longitude=${lngsParam}&current=temperature_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,wind_gusts_10m,relative_humidity_2m`;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latsParam}&longitude=${lngsParam}&hourly=temperature_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,wind_gusts_10m,relative_humidity_2m&forecast_days=2`;
     
     const response = await fetch(url);
     if (!response.ok) {
@@ -209,22 +209,34 @@ export async function fetchLisbonGridWeather(windPreset = 'live') {
     // If it's single coordinate result array vs multi array
     const results = Array.isArray(data) ? data : [data];
     
+    const now = new Date();
+    const currentHourStr = now.toISOString().substring(0, 14) + '00';
+    
     return LISBON_GRID_POINTS.map((pt, i) => {
       const forecast = results[i];
-      if (!forecast || !forecast.current) {
+      if (!forecast || !forecast.hourly) {
         throw new Error('Malformed Open-Meteo grid response');
+      }
+      
+      let timeIndex = forecast.hourly.time.findIndex(t => t === currentHourStr);
+      if (timeIndex === -1) timeIndex = 0;
+      
+      timeIndex += hourOffset;
+      if (timeIndex >= forecast.hourly.time.length) {
+        timeIndex = forecast.hourly.time.length - 1;
       }
       
       return {
         lat: pt.lat,
         lng: pt.lng,
-        windSpeed: Math.round(forecast.current.wind_speed_10m),
-        windDir: Math.round(forecast.current.wind_direction_10m),
-        windGusts: Math.round(forecast.current.wind_gusts_10m),
-        temp: Math.round(forecast.current.temperature_2m),
-        apparentTemp: Math.round(forecast.current.apparent_temperature),
-        relativeHumidity: Math.round(forecast.current.relative_humidity_2m),
-        isRealTime: true
+        windSpeed: Math.round(forecast.hourly.wind_speed_10m[timeIndex]),
+        windDir: Math.round(forecast.hourly.wind_direction_10m[timeIndex]),
+        windGusts: Math.round(forecast.hourly.wind_gusts_10m[timeIndex]),
+        temp: Math.round(forecast.hourly.temperature_2m[timeIndex]),
+        apparentTemp: Math.round(forecast.hourly.apparent_temperature[timeIndex]),
+        relativeHumidity: Math.round(forecast.hourly.relative_humidity_2m[timeIndex]),
+        isRealTime: true,
+        forecastTime: forecast.hourly.time[timeIndex]
       };
     });
   } catch (error) {
