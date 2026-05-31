@@ -16,6 +16,12 @@
   --color-breeze: #81c784;     /* Light Green/Teal - 5-10 km/h */
   --color-moderate: #ff9100;   /* Warm Orange - 10-15 km/h */
   --color-dangerous: #ff1744;  /* Hot Coral/Red - >15 km/h */
+
+  /* Global utility classes for text colors */
+.text-safe { color: var(--color-safe); }
+.text-moderate { color: var(--color-moderate); }
+.text-danger { color: var(--color-dangerous); }
+.text-warn { color: var(--color-moderate); }
   
   /* Font pairings */
   --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

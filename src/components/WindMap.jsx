@@ -36,7 +36,8 @@ function MapController({ activeRoute, selectedSpot }) {
       const currentSpotId = selectedSpot.id;
       if (prevSpotId.current !== currentSpotId) {
         prevSpotId.current = currentSpotId;
-        map.setView([selectedSpot.lat, selectedSpot.lng], 13, { animate: true });
+        const zoomLevel = selectedSpot.id === 'user_location' ? 17 : 13;
+        map.setView([selectedSpot.lat, selectedSpot.lng], zoomLevel, { animate: true });
       }
     } else {
       prevSpotId.current = null;
@@ -393,6 +394,27 @@ export default function WindMap({
                   <span className="rider-tag">RIDER HUD LIVE POSITION</span>
                   <span className="rider-distance">Dist: {simulatedState.distance.toFixed(1)} km</span>
                   <span className="rider-ele">Elevation: {simulatedState.ele}m</span>
+                </div>
+              </Popup>
+            </CircleMarker>
+          )}
+          {/* 4. User Location marker if active */}
+          {selectedSpot && selectedSpot.id === 'user_location' && (
+            <CircleMarker
+              key="user-location-marker"
+              center={[selectedSpot.lat, selectedSpot.lng]}
+              radius={8}
+              pathOptions={{
+                fillColor: '#3b82f6', // Bright blue for user location
+                fillOpacity: 1,
+                color: '#ffffff',
+                weight: 3
+              }}
+            >
+              <Popup>
+                <div className="rider-popup">
+                  <span className="rider-tag" style={{ color: '#3b82f6' }}>MY LOCATION</span>
+                  <span className="rider-distance">Live GPS Position</span>
                 </div>
               </Popup>
             </CircleMarker>

@@ -8,7 +8,8 @@ import {
   ShieldCheck,
   Warning,
   ArrowRight,
-  WaveTriangle
+  WaveTriangle,
+  Crosshair
 } from '@phosphor-icons/react';
 import WindMap from './components/WindMap';
 import RideHUD from './components/RideHUD';
@@ -37,6 +38,28 @@ export default function App() {
       setIsLoading(false);
     }
     loadWeather();
+
+    // Attempt to locate user automatically on mount
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          setSelectedSpot({
+            id: 'user_location',
+            name: 'My Location',
+            lat: lat,
+            lng: lng,
+            isSheltered: false,
+            rimWarning: false,
+            desc: 'Your current GPS location.'
+          });
+        },
+        (error) => {
+          console.warn("Could not auto-locate on mount, falling back to default.", error);
+        }
+      );
+    }
   }, []);
 
   // Set default simulated state when activeRoute changes
@@ -73,6 +96,39 @@ export default function App() {
   // Helper: Get weather specifically at a spot
   const getSpotWeather = (spot) => {
     return getInterpolatedWeather(spot.lat, spot.lng, gridWeather);
+  };
+
+  const handleLocateMe = () => {
+    if (navigator.geolocation) {
+      setIsLoading(true);
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const userSpot = {
+            id: 'user_location',
+            name: 'My Location',
+            lat: lat,
+            lng: lng,
+            isSheltered: false,
+            rimWarning: false,
+            desc: 'Your current GPS location.'
+          };
+          setSelectedSpot(userSpot);
+          setActiveRoute(null);
+          setSimulatedState(null);
+          setActiveTab('map');
+          setIsLoading(false);
+        },
+        (error) => {
+          console.error("Error getting location", error);
+          alert("Could not get your location.");
+          setIsLoading(false);
+        }
+      );
+    } else {
+      alert("Geolocation is not supported by this browser.");
+    }
   };
 
   // Analyze segments of active route
@@ -173,10 +229,20 @@ export default function App() {
           </div>
         </div>
 
-        {/* Live Weather Status Indicator */}
-        <div className="live-header-status">
-          <span className="live-dot-pulse"></span>
-          <span className="live-status-text">LIVE REAL-TIME WIND</span>
+        {/* Live Weather Status Indicator and Locate Me */}
+        <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button 
+            onClick={handleLocateMe}
+            className={`locate-me-btn ${selectedSpot?.id === 'user_location' ? 'active-locate' : ''}`}
+          >
+            <Crosshair size={16} />
+            <span>LOCATE ME</span>
+          </button>
+          
+          <div className="live-header-status">
+            <span className="live-dot-pulse"></span>
+            <span className="live-status-text">LIVE REAL-TIME WIND</span>
+          </div>
         </div>
       </header>
 
@@ -755,6 +821,44 @@ export default function App() {
           color: var(--color-safe);
           letter-spacing: 0.5px;
           font-family: var(--font-sans);
+        }
+
+        .locate-me-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          padding: 6px 14px;
+          border-radius: 20px;
+          color: var(--text-primary);
+          font-family: var(--font-sans);
+          font-size: 0.72rem;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .locate-me-btn:hover {
+          background: rgba(255, 255, 255, 0.1);
+          border-color: rgba(255, 255, 255, 0.25);
+          color: var(--color-safe);
+        }
+
+        .locate-me-btn.active-locate {
+          background: rgba(0, 230, 118, 0.15);
+          border-color: rgba(0, 230, 118, 0.4);
+          color: var(--color-safe);
+          box-shadow: 0 0 10px rgba(0, 230, 118, 0.2);
+        }
+
+        .locate-me-btn svg {
+          transition: color 0.2s ease;
+        }
+        
+        .locate-me-btn:hover svg, .locate-me-btn.active-locate svg {
+          color: var(--color-safe);
         }
 
         /* Premium Route Analysis Card sidebar specific styles */
