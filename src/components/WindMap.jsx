@@ -36,10 +36,19 @@ function MapController({ activeRoute, selectedSpot }) {
       const currentSpotId = selectedSpot.id;
       if (prevSpotId.current !== currentSpotId) {
         prevSpotId.current = currentSpotId;
-        const zoomLevel = selectedSpot.id === 'user_location' ? 17 : 13;
-        map.setView([selectedSpot.lat, selectedSpot.lng], zoomLevel, { animate: true });
+        if (selectedSpot.id === 'user_location') {
+          // Set a closer zoom level for "Locate Me"
+          map.setView([selectedSpot.lat, selectedSpot.lng], 16, { animate: true });
+        } else {
+          // Zoom out a bit for other spots (11 instead of 13)
+          map.setView([selectedSpot.lat, selectedSpot.lng], 11, { animate: true });
+        }
       }
     } else {
+      // Default to Lisbon Central if no spot or route
+      if (!activeRoute) {
+        map.setView([38.73, -9.25], 11, { animate: true });
+      }
       prevSpotId.current = null;
     }
   }, [activeRoute, selectedSpot, map]);
@@ -618,6 +627,38 @@ export default function WindMap({
           font-size: 0.78rem;
           color: var(--text-primary);
           font-weight: 600;
+        }
+
+        @media (max-width: 767px) {
+          .map-wrapper-card {
+            height: 320px;
+          }
+          .map-hud-header {
+            padding: 8px;
+            gap: 8px;
+          }
+          .hud-header-metrics {
+            gap: 4px;
+            justify-content: space-between;
+            width: 100%;
+          }
+          .hud-header-divider {
+            margin: 0 2px;
+            height: 18px;
+          }
+          .m-lbl {
+            font-size: 0.55rem;
+          }
+          .m-val {
+            font-size: 0.7rem;
+          }
+          .m-val-container svg {
+            width: 10px;
+            height: 10px;
+          }
+          .feels-label {
+            display: none;
+          }
         }
       `}</style>
     </div>

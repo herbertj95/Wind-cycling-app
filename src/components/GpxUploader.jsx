@@ -161,10 +161,10 @@ export default function GpxUploader({
 
       <style>{`
         .gpx-uploader-container {
-          padding: 16px;
+          padding: 12px;
           display: flex;
           flex-direction: column;
-          gap: 14px;
+          gap: 10px;
           background: var(--bg-card);
           border: 1px solid var(--border-color);
           border-radius: 12px;

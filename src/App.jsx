@@ -233,7 +233,7 @@ export default function App() {
         </div>
 
         {/* Live Weather Status Indicator and Locate Me */}
-        <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="header-actions">
           <button 
             onClick={handleLocateMe}
             className={`locate-me-btn ${selectedSpot?.id === 'user_location' ? 'active-locate' : ''}`}
@@ -241,35 +241,37 @@ export default function App() {
             <Crosshair size={16} />
             <span>LOCATE ME</span>
           </button>
-          
-          {/* Time Forecast Slider */}
-          <div className="forecast-slider-container glass-panel">
-            <span className="forecast-label">
-              {forecastOffset === 0 ? "NOW" : `+${forecastOffset}H`}
-            </span>
-            <input 
-              type="range" 
-              min="0" 
-              max="3" 
-              step="1" 
-              value={forecastOffset}
-              onChange={(e) => setForecastOffset(parseInt(e.target.value))}
-              className="forecast-slider"
-            />
-          </div>
-          
-          <div className="live-header-status">
-            {forecastOffset === 0 ? (
-              <>
-                <span className="live-dot-pulse"></span>
-                <span className="live-status-text">LIVE REAL-TIME WIND</span>
-              </>
-            ) : (
-              <>
-                <span className="live-dot-pulse" style={{ backgroundColor: 'var(--color-moderate)', animation: 'none', boxShadow: 'none' }}></span>
-                <span className="live-status-text" style={{ color: 'var(--color-moderate)' }}>FORECAST (+{forecastOffset} HRS)</span>
-              </>
-            )}
+
+          <div className="forecast-controls-group">
+            {/* Time Forecast Slider */}
+            <div className="forecast-slider-container glass-panel">
+              <span className="forecast-label">
+                {forecastOffset === 0 ? "NOW" : `+${forecastOffset}H`}
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="3"
+                step="1"
+                value={forecastOffset}
+                onChange={(e) => setForecastOffset(parseInt(e.target.value))}
+                className="forecast-slider"
+              />
+            </div>
+
+            <div className="live-header-status">
+              {forecastOffset === 0 ? (
+                <>
+                  <span className="live-dot-pulse"></span>
+                  <span className="live-status-text">LIVE REAL-TIME WIND</span>
+                </>
+              ) : (
+                <>
+                  <span className="live-dot-pulse" style={{ backgroundColor: 'var(--color-moderate)', animation: 'none', boxShadow: 'none' }}></span>
+                  <span className="live-status-text" style={{ color: 'var(--color-moderate)' }}>FORECAST (+{forecastOffset} HRS)</span>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -583,7 +585,7 @@ export default function App() {
         }
 
         .logo-subtitle {
-          font-size: 0.72rem;
+          font-size: 0.65rem;
           font-weight: 600;
           color: var(--text-secondary);
           text-transform: uppercase;
@@ -604,6 +606,19 @@ export default function App() {
           letter-spacing: 0.5px;
         }
 
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .forecast-controls-group {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
+        }
+
         .app-main-grid {
           display: grid;
           grid-template-columns: 1fr;
@@ -613,7 +628,20 @@ export default function App() {
         }
 
         @media (min-width: 768px) and (max-width: 1199px) {
-          .app-main-grid {
+          .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .forecast-controls-group {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
+        }
+
+        .app-main-grid {
             grid-template-columns: 320px 1fr;
           }
           .microclimates-column {
@@ -622,7 +650,20 @@ export default function App() {
         }
 
         @media (min-width: 1200px) {
-          .app-main-grid {
+          .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .forecast-controls-group {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
+        }
+
+        .app-main-grid {
             grid-template-columns: 320px 1fr 340px;
           }
           .app-main-grid.hud-active-grid {
@@ -633,20 +674,20 @@ export default function App() {
         .controls-column {
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          gap: 12px;
         }
 
         .views-column {
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          gap: 12px;
           min-width: 0;
         }
 
         .microclimates-column {
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          gap: 12px;
         }
 
         .tab-menu {
@@ -839,12 +880,12 @@ export default function App() {
           gap: 6px;
           background: rgba(0, 230, 118, 0.05);
           border: 1px solid rgba(0, 230, 118, 0.15);
-          padding: 6px 14px;
+          padding: 4px 10px;
           border-radius: 20px;
         }
 
         .live-status-text {
-          font-size: 0.72rem;
+          font-size: 0.65rem;
           font-weight: 800;
           color: var(--color-safe);
           letter-spacing: 0.5px;
@@ -861,7 +902,7 @@ export default function App() {
           border-radius: 20px;
           color: var(--text-primary);
           font-family: var(--font-sans);
-          font-size: 0.72rem;
+          font-size: 0.65rem;
           font-weight: 800;
           letter-spacing: 0.5px;
           cursor: pointer;
@@ -893,11 +934,11 @@ export default function App() {
         .spot-sidebar-panel {
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: 10px;
           width: 100%;
           max-height: calc(100vh - 200px);
           overflow: hidden;
-          padding: 16px;
+          padding: 12px;
         }
 
         .analysis-stats-grid {
@@ -1037,10 +1078,10 @@ export default function App() {
 
         .forecast-label {
           font-family: var(--font-mono);
-          font-size: 0.75rem;
+          font-size: 0.65rem;
           font-weight: 700;
           color: var(--text-primary);
-          min-width: 32px;
+          min-width: 28px;
         }
 
         .forecast-slider {
@@ -1072,6 +1113,83 @@ export default function App() {
           background: var(--color-safe);
           cursor: pointer;
           border: 2px solid #0a0c10;
+        }
+
+        @media (max-width: 767px) {
+          .app-viewport-container {
+            padding: 10px;
+            gap: 10px;
+          }
+
+          .app-header {
+            padding: 12px;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 12px;
+          }
+
+          .views-column {
+            order: -1;
+          }
+
+          .header-actions {
+            width: 100%;
+            flex-wrap: wrap;
+            justify-content: space-between;
+          }
+
+          .forecast-controls-group {
+            align-items: flex-end;
+          }
+
+          .logo-title {
+            font-size: 1.2rem;
+          }
+
+          .logo-subtitle {
+            font-size: 0.65rem;
+          }
+
+          .locate-me-btn {
+            padding: 6px 10px;
+          }
+
+          .forecast-slider-container {
+            padding: 6px 10px;
+            gap: 8px;
+          }
+
+          .forecast-slider {
+            width: 80px;
+          }
+
+          .live-header-status {
+            padding: 6px 10px;
+          }
+
+          .live-status-text {
+            font-size: 0.65rem;
+          }
+
+          .tab-btn {
+            padding: 8px;
+            gap: 4px;
+            flex-direction: column;
+          }
+
+          .tab-btn span {
+            font-size: 0.7rem;
+            text-align: center;
+          }
+
+          .spot-sidebar-panel {
+            max-height: none;
+            padding: 12px;
+          }
+
+          .analysis-stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
         }
       `}</style>
     </div>

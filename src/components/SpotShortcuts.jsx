@@ -118,11 +118,11 @@ export default function SpotShortcuts({
         .spot-sidebar-panel {
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: 10px;
           width: 100%;
           max-height: calc(100vh - 200px);
           overflow: hidden;
-          padding: 16px;
+          padding: 12px;
         }
         
         .sidebar-header-compact {
@@ -192,13 +192,13 @@ export default function SpotShortcuts({
         }
 
         .spot-item-name {
-          font-size: 0.82rem;
+          font-size: 0.75rem;
           font-weight: 700;
           color: var(--text-primary);
         }
 
         .spot-item-desc-short {
-          font-size: 0.65rem;
+          font-size: 0.6rem;
           font-weight: 700;
           text-transform: uppercase;
         }
@@ -211,7 +211,7 @@ export default function SpotShortcuts({
 
         .spot-item-speed {
           font-family: var(--font-mono);
-          font-size: 0.85rem;
+          font-size: 0.78rem;
           font-weight: 800;
         }
 
@@ -272,9 +272,9 @@ export default function SpotShortcuts({
         }
 
         .spot-description {
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           color: var(--text-secondary);
-          line-height: 1.4;
+          line-height: 1.35;
           margin: 0;
         }
 

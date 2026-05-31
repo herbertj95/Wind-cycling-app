@@ -65,8 +65,8 @@ export default function RideHUD({
   const simulationTimer = useRef(null);
 
   // Fallback state if no route is loaded
-  const fallbackLat = 38.73;
-  const fallbackLng = -9.25;
+  const fallbackLat = 38.722;
+  const fallbackLng = -9.139;
   const fallbackBearing = 340; // NNW
 
   // Get current position coordinates and bearing
@@ -317,7 +317,7 @@ export default function RideHUD({
             {/* Floating Top Left Wind HUD Badge */}
             <MapContainer
               center={[currentLat, currentLng]}
-              zoom={14}
+              zoom={11}
               zoomControl={true}
               scrollWheelZoom={true}
               dragging={true}
@@ -1047,6 +1047,70 @@ export default function RideHUD({
         .wind-arrow-divicon {
           background: transparent !important;
           border: none !important;
+        }
+
+        @media (max-width: 767px) {
+          .ride-hud-container {
+            padding: 10px;
+            gap: 8px;
+          }
+          .hud-mini-map-card {
+            height: 220px;
+          }
+          .hud-widget {
+            padding: 8px;
+            gap: 6px;
+          }
+          .hud-compass-wrapper {
+            width: 100px;
+            height: 100px;
+          }
+          .bike-center-icon {
+            width: 28px;
+            height: 28px;
+          }
+          .bike-center-icon svg {
+            width: 14px;
+            height: 14px;
+          }
+          .compass-bearing-num {
+            font-size: 1.1rem;
+          }
+          .telemetry-value {
+            font-size: 1rem;
+          }
+          .telemetry-box {
+            padding: 6px;
+            gap: 2px;
+          }
+          .telemetry-header {
+            font-size: 0.65rem;
+          }
+          .telemetry-footer {
+            display: none;
+          }
+          .hud-alert-banner {
+            padding: 4px 8px;
+            font-size: 0.65rem;
+            gap: 6px;
+          }
+          .hud-column-header {
+            padding-bottom: 2px;
+            margin-bottom: 4px;
+          }
+          .hud-header-label {
+            font-size: 0.65rem;
+          }
+          .hud-console-layout {
+            gap: 10px;
+          }
+          .metrics-layout-grid {
+            gap: 8px;
+          }
+          .compass-wind-speed {
+            padding: 2px 8px;
+            font-size: 0.75rem;
+          }
         }
       `}</style>
     </div>
