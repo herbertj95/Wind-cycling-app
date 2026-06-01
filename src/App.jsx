@@ -19,6 +19,9 @@ import { fetchLisbonGridWeather, MICROCLIMATE_SPOTS } from './utils/weatherApi';
 import { calculateDistance, classifyWindEffect } from './utils/gpxParser';
 import { getInterpolatedWeather } from './utils/weatherApi';
 
+// Forecast intervals in hours
+const FORECAST_STEPS = [0, 1, 2, 3, 24];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('map'); // 'map' or 'hud'
   const [gridWeather, setGridWeather] = useState([]);
@@ -28,6 +31,7 @@ export default function App() {
   // State for simulated rider HUD position
   const [simulatedState, setSimulatedState] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLocating, setIsLocating] = useState(false);
   const [forecastOffset, setForecastOffset] = useState(0);
 
   // Fetch weather when forecast offset changes
@@ -103,7 +107,7 @@ export default function App() {
 
   const handleLocateMe = () => {
     if (navigator.geolocation) {
-      setIsLoading(true);
+      setIsLocating(true);
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const lat = position.coords.latitude;
@@ -121,13 +125,14 @@ export default function App() {
           setActiveRoute(null);
           setSimulatedState(null);
           setActiveTab('map');
-          setIsLoading(false);
+          setIsLocating(false);
         },
         (error) => {
           console.error("Error getting location", error);
-          alert("Could not get your location.");
-          setIsLoading(false);
-        }
+          alert("Could not get your location. Please check if GPS is enabled.");
+          setIsLocating(false);
+        },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
       );
     } else {
       alert("Geolocation is not supported by this browser.");
@@ -236,27 +241,39 @@ export default function App() {
         <div className="header-actions">
           <button 
             onClick={handleLocateMe}
-            className={`locate-me-btn ${selectedSpot?.id === 'user_location' ? 'active-locate' : ''}`}
+            className={`locate-me-btn ${selectedSpot?.id === 'user_location' ? 'active-locate' : ''} ${isLocating ? 'locating' : ''}`}
+            disabled={isLocating}
           >
-            <Crosshair size={16} />
-            <span>LOCATE ME</span>
+            {isLocating ? (
+              <span className="button-loader"></span>
+            ) : (
+              <Crosshair size={16} />
+            )}
+            <span>{isLocating ? 'LOCATING...' : 'LOCATE ME'}</span>
           </button>
 
           <div className="forecast-controls-group">
             {/* Time Forecast Slider */}
             <div className="forecast-slider-container glass-panel">
               <span className="forecast-label">
-                {forecastOffset === 0 ? "NOW" : `+${forecastOffset}H`}
+                {forecastOffset === 0 ? "NOW" : forecastOffset === 24 ? "+24H" : `+${forecastOffset}H`}
               </span>
-              <input
-                type="range"
-                min="0"
-                max="3"
-                step="1"
-                value={forecastOffset}
-                onChange={(e) => setForecastOffset(parseInt(e.target.value))}
-                className="forecast-slider"
-              />
+              <div className="slider-wrapper">
+                <input
+                  type="range"
+                  min="0"
+                  max={FORECAST_STEPS.length - 1}
+                  step="1"
+                  value={FORECAST_STEPS.indexOf(forecastOffset)}
+                  onChange={(e) => setForecastOffset(FORECAST_STEPS[parseInt(e.target.value)])}
+                  className={`forecast-slider offset-${forecastOffset}`}
+                />
+                <div className="slider-marks">
+                  {FORECAST_STEPS.map((_, i) => (
+                    <div key={i} className="slider-mark"></div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div className="live-header-status">
@@ -267,8 +284,16 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <span className="live-dot-pulse" style={{ backgroundColor: 'var(--color-moderate)', animation: 'none', boxShadow: 'none' }}></span>
-                  <span className="live-status-text" style={{ color: 'var(--color-moderate)' }}>FORECAST (+{forecastOffset} HRS)</span>
+                  <span className="live-dot-pulse" style={{
+                    backgroundColor: forecastOffset === 24 ? '#2196F3' : 'var(--color-moderate)',
+                    animation: 'none',
+                    boxShadow: 'none'
+                  }}></span>
+                  <span className="live-status-text" style={{
+                    color: forecastOffset === 24 ? '#2196F3' : 'var(--color-moderate)'
+                  }}>
+                    {forecastOffset === 24 ? "FORECAST (NEXT DAY)" : `FORECAST (+${forecastOffset} HRS)`}
+                  </span>
                 </>
               )}
             </div>
@@ -930,6 +955,20 @@ export default function App() {
           color: var(--color-safe);
         }
 
+        .locate-me-btn.locating {
+          opacity: 0.8;
+          cursor: wait;
+        }
+
+        .button-loader {
+          width: 14px;
+          height: 14px;
+          border: 2px solid rgba(0, 230, 118, 0.2);
+          border-radius: 50%;
+          border-top-color: var(--color-safe);
+          animation: spin 0.8s linear infinite;
+        }
+
         /* Premium Route Analysis Card sidebar specific styles */
         .spot-sidebar-panel {
           display: flex;
@@ -1087,32 +1126,68 @@ export default function App() {
         .forecast-slider {
           -webkit-appearance: none;
           appearance: none;
-          width: 100px;
+          width: 160px;
           height: 4px;
           background: rgba(255, 255, 255, 0.1);
           border-radius: 2px;
           outline: none;
           cursor: pointer;
+          position: relative;
+          z-index: 2;
         }
+
+        .slider-wrapper {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+
+        .slider-marks {
+          position: absolute;
+          width: 100%;
+          display: flex;
+          justify-content: space-between;
+          padding: 0 4px;
+          pointer-events: none;
+        }
+
+        .slider-mark {
+          width: 2px;
+          height: 8px;
+          background: rgba(255, 255, 255, 0.2);
+          border-radius: 1px;
+        }
+
+        .forecast-slider.offset-0::-webkit-slider-thumb { background: var(--color-safe); }
+        .forecast-slider.offset-1::-webkit-slider-thumb { background: var(--color-moderate); }
+        .forecast-slider.offset-2::-webkit-slider-thumb { background: var(--color-moderate); }
+        .forecast-slider.offset-3::-webkit-slider-thumb { background: var(--color-moderate); }
+        .forecast-slider.offset-24::-webkit-slider-thumb { background: #2196F3; }
+
+        .forecast-slider.offset-0::-moz-range-thumb { background: var(--color-safe); }
+        .forecast-slider.offset-1::-moz-range-thumb { background: var(--color-moderate); }
+        .forecast-slider.offset-2::-moz-range-thumb { background: var(--color-moderate); }
+        .forecast-slider.offset-3::-moz-range-thumb { background: var(--color-moderate); }
+        .forecast-slider.offset-24::-moz-range-thumb { background: #2196F3; }
 
         .forecast-slider::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: 14px;
-          height: 14px;
+          width: 16px;
+          height: 16px;
           border-radius: 50%;
-          background: var(--color-safe);
           cursor: pointer;
           border: 2px solid #0a0c10;
+          transition: background 0.2s ease;
         }
 
         .forecast-slider::-moz-range-thumb {
-          width: 14px;
-          height: 14px;
+          width: 16px;
+          height: 16px;
           border-radius: 50%;
-          background: var(--color-safe);
           cursor: pointer;
           border: 2px solid #0a0c10;
+          transition: background 0.2s ease;
         }
 
         @media (max-width: 767px) {
@@ -1160,7 +1235,10 @@ export default function App() {
           }
 
           .forecast-slider {
-            width: 80px;
+            width: 120px;
+          }
+          .slider-marks {
+            width: 120px;
           }
 
           .live-header-status {
