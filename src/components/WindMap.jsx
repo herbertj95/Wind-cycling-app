@@ -33,15 +33,24 @@ function MapController({ activeRoute, selectedSpot }) {
 
     // 2. Zoom/Pan to selectedSpot only once when spot changes
     if (selectedSpot) {
-      const currentSpotId = selectedSpot.id;
+      // Use timestamp or coordinates to ensure we re-center even if the same spot is re-selected (like 'Locate Me')
+      const currentSpotId = selectedSpot.timestamp
+        ? `${selectedSpot.id}-${selectedSpot.timestamp}`
+        : `${selectedSpot.id}-${selectedSpot.lat}-${selectedSpot.lng}`;
+
       if (prevSpotId.current !== currentSpotId) {
         prevSpotId.current = currentSpotId;
+
         if (selectedSpot.id === 'user_location') {
-          // Set a closer zoom level for "Locate Me"
-          map.setView([selectedSpot.lat, selectedSpot.lng], 16, { animate: true });
+          // Use setView for a more robust and reliable transition for user location
+          map.setView([selectedSpot.lat, selectedSpot.lng], 16, {
+            animate: true
+          });
         } else {
-          // Zoom out a bit for other spots (11 instead of 13)
-          map.setView([selectedSpot.lat, selectedSpot.lng], 11, { animate: true });
+          // Zoom out a bit for other spots (11 instead of 16)
+          map.setView([selectedSpot.lat, selectedSpot.lng], 11, {
+            animate: true
+          });
         }
       }
     } else {

@@ -57,6 +57,7 @@ export default function App() {
             name: 'My Location',
             lat: lat,
             lng: lng,
+            timestamp: Date.now(),
             isSheltered: false,
             rimWarning: false,
             desc: 'Your current GPS location.'
@@ -97,7 +98,7 @@ export default function App() {
   };
 
   const handleSelectSpot = (spot) => {
-    setSelectedSpot(spot);
+    setSelectedSpot({ ...spot, timestamp: Date.now() });
   };
 
   // Helper: Get weather specifically at a spot
@@ -117,6 +118,7 @@ export default function App() {
             name: 'My Location',
             lat: lat,
             lng: lng,
+            timestamp: Date.now(),
             isSheltered: false,
             rimWarning: false,
             desc: 'Your current GPS location.'
@@ -132,7 +134,7 @@ export default function App() {
           alert("Could not get your location. Please check if GPS is enabled.");
           setIsLocating(false);
         },
-        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     } else {
       alert("Geolocation is not supported by this browser.");
