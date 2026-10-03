@@ -7,9 +7,10 @@ const REFRESH_MS = 30 * 60 * 1000;
  * Keeps the forecast fresh: loads it on start, every half hour, when the app comes back to the front
  * and as soon as the connection returns.
  * While a request fails, the last forecast saved on this device keeps being shown and `error` says why.
+ * `serviceDown` is true when the device was online but the forecast service refused or sent bad data.
  */
 export function useForecast() {
-  const [state, setState] = useState(() => ({ forecast: loadCachedForecast(), error: null, loading: true }));
+  const [state, setState] = useState(() => ({ forecast: loadCachedForecast(), error: null, serviceDown: false, loading: true }));
   const lastAttempt = useRef(0);
   const lastFailed = useRef(false);
 
@@ -18,10 +19,12 @@ export function useForecast() {
     try {
       const forecast = await fetchForecast();
       lastFailed.current = false;
-      setState({ forecast, error: null, loading: false });
+      setState({ forecast, error: null, serviceDown: false, loading: false });
     } catch (error) {
       lastFailed.current = true;
-      setState((prev) => ({ forecast: prev.forecast, error: error.message || 'Network error', loading: false }));
+      // a failed or timed-out request is a connection problem; anything else came from the service
+      const offline = error instanceof TypeError || error.name === 'AbortError' || error.name === 'TimeoutError';
+      setState((prev) => ({ forecast: prev.forecast, error: error.message || 'Network error', serviceDown: !offline, loading: false }));
     }
   }, []);
 

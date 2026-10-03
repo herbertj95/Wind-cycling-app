@@ -7,9 +7,10 @@ import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees 
  * - reading: { speed, from, gust, feels } or null while there is no forecast
  * - rider: { bearing, head, cross, color } when the focus is a point on the route
  * - updatedAt / offlineSince: when the forecast was downloaded, e.g. "Sat 3, 18:42"
+ * - serviceDown: the last request failed because the forecast service refused, not because of the connection
  * - quiet: the numbers are changing continuously (playback), so screen readers are not told each step
  */
-export default function WindReadout({ ref, title, when, reading, rider, note, outside, status, updatedAt, offlineSince, quiet, onRetry }) {
+export default function WindReadout({ ref, title, when, reading, rider, note, outside, status, updatedAt, offlineSince, serviceDown, quiet, onRetry }) {
   const hasReading = status === 'ready' && reading && !outside;
   const isCalm = hasReading && reading.speed < CALM_KMH;
   const speed = hasReading ? Math.round(reading.speed) : null;
@@ -24,7 +25,11 @@ export default function WindReadout({ ref, title, when, reading, rider, note, ou
 
       {status === 'error' ? (
         <div className="readout-message">
-          <p>The wind forecast could not be loaded. Check your connection.</p>
+          <p>
+            {serviceDown
+              ? 'The forecast service is not answering right now. Try again in a while.'
+              : 'The wind forecast could not be loaded. Check your connection.'}
+          </p>
           <button type="button" className="text-button" onClick={onRetry}>Try again</button>
         </div>
       ) : status === 'loading' ? (
@@ -88,7 +93,7 @@ export default function WindReadout({ ref, title, when, reading, rider, note, ou
         <p className="readout-offline">
           <WifiSlash size={14} aria-hidden="true" />
           <span>
-            Offline. Showing the forecast from {offlineSince}.{' '}
+            {serviceDown ? 'The forecast service is not answering.' : 'Offline.'} Showing the forecast from {offlineSince}.{' '}
             <button type="button" className="text-button" onClick={onRetry}>Try again</button>
           </span>
         </p>

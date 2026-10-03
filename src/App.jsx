@@ -23,7 +23,10 @@ const THEME_KEY = 'wind-theme';
 const NARROW_SCREEN = 720;
 // ms between rider steps at 1x: a 600-point route plays in a little over a minute
 const RIDE_TICK_MS = 120;
-const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
+// "Locate me" asks for a precise fix; the quiet look-up on start takes whatever is quick
+const GEO_PRECISE = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
+const GEO_QUICK = { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 };
+const GEO_TIMEOUT = 3;
 const MENU_ID = 'routes-menu';
 
 function initialTheme() {
@@ -39,8 +42,10 @@ function initialTheme() {
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export default function App() {
-  const { forecast, error, loading, retry } = useForecast();
+  const { forecast: loaded, error, serviceDown, loading, retry } = useForecast();
   const now = useNow();
+  // a forecast whose last hour has passed has nothing to say about now
+  const forecast = loaded && now / 1000 < loaded.hours[loaded.hours.length - 1] + 3600 ? loaded : null;
 
   const [theme, setTheme] = useState(initialTheme);
   const [flowEnabled, setFlowEnabled] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -196,9 +201,13 @@ export default function App() {
 
   // The time bar describes one fixed place. While following the rider that place is the start of the
   // route, so the bars answer "when should I leave" and do not change with every step of the ride.
+  // A place outside the forecast area has no wind to plot, so the bars fall back to the first spot.
   const barsAtStart = focus.type === 'rider' && route !== null;
-  const barsLat = barsAtStart ? route.points[0].lat : focusPlace.lat;
-  const barsLng = barsAtStart ? route.points[0].lng : focusPlace.lng;
+  const barsWanted = barsAtStart ? route.points[0] : focusPlace;
+  const barsOutside = !inCoverage(barsWanted.lat, barsWanted.lng);
+  const barsLat = barsOutside ? SPOTS[0].lat : barsWanted.lat;
+  const barsLng = barsOutside ? SPOTS[0].lng : barsWanted.lng;
+  const barsPlace = barsOutside ? SPOTS[0].label : barsAtStart ? 'the start' : focusPlace.place;
   const series = useMemo(() => {
     if (!forecast) return [];
     const hours = [];
@@ -364,11 +373,13 @@ export default function App() {
         setIsLocating(false);
         showPosition(position.coords.latitude, position.coords.longitude, false);
       },
-      () => {
+      (error) => {
         setIsLocating(false);
-        notify('Could not get your location. Check that location is switched on.');
+        notify(error.code === GEO_TIMEOUT
+          ? 'Still looking for your position. Try again in a moment.'
+          : 'Could not get your location. Check that location is switched on.');
       },
-      GEO_OPTIONS,
+      GEO_PRECISE,
     );
   };
 
@@ -377,7 +388,7 @@ export default function App() {
     navigator.geolocation?.getCurrentPosition(
       (position) => showPosition(position.coords.latitude, position.coords.longitude, true),
       () => {},
-      GEO_OPTIONS,
+      GEO_QUICK,
     );
   }, [showPosition]);
 
@@ -490,8 +501,9 @@ export default function App() {
         note={focusPlace.note}
         outside={reading?.outside}
         status={status}
-        updatedAt={forecast ? formatClock(forecast.fetchedAt / 1000) : null}
+        updatedAt={forecast ? formatDayClock(forecast.fetchedAt / 1000) : null}
         offlineSince={error && forecast ? formatDayClock(forecast.fetchedAt / 1000) : null}
+        serviceDown={serviceDown}
         quiet={isRiding || forecastPlaying}
         onRetry={retry}
       />
@@ -576,8 +588,8 @@ export default function App() {
           onSelect={selectHour}
           playing={forecastPlaying}
           onTogglePlay={() => setForecastPlaying((playing) => !playing)}
-          place={barsAtStart ? 'the start' : focusPlace.place}
-          rideStart={barsAtStart}
+          place={barsPlace}
+          rideStart={barsAtStart && !barsOutside}
         />
       </div>
     </div>

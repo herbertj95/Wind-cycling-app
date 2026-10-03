@@ -10,8 +10,10 @@ const HEAD = 6.5; // arrowhead size in px
 const MIN_LENGTH = 10;
 const MAX_LENGTH = 44;
 const FULL_LENGTH_KMH = 50;
-// An arrow this close to the edge would have its number cut in half ("15" reading as "5"), so it is left out
+// An arrow whose number would be cut by the edge ("15" reading as "5") is left out. The number sits upwind
+// of the arrow, so it is checked on its own as well as the arrow's centre.
 const EDGE_MARGIN = 26;
+const LABEL_MARGIN = 10;
 
 /**
  * Draws the arrow lattice. The lattice is anchored to the ground (not the screen) so arrows stay put while panning,
@@ -75,6 +77,10 @@ export function drawGlyphs(ctx, { width, height, zoom, bounds, project, sample, 
       const tailY = p.y - (dy * length) / 2;
       const nx = -dy;
       const ny = dx;
+      // the number sits just behind the tail, upwind of the arrow
+      const labelX = tailX - dx * 11;
+      const labelY = tailY - dy * 11;
+      if (labelX < LABEL_MARGIN || labelY < LABEL_MARGIN || labelX > width - LABEL_MARGIN || labelY > height - LABEL_MARGIN) continue;
 
       const trace = () => {
         ctx.beginPath();
@@ -95,10 +101,7 @@ export function drawGlyphs(ctx, { width, height, zoom, bounds, project, sample, 
       ctx.globalAlpha = 1;
       ctx.stroke();
 
-      // the number sits just behind the tail, upwind of the arrow
       const label = String(Math.round(w.speed));
-      const labelX = tailX - dx * 11;
-      const labelY = tailY - dy * 11;
       ctx.strokeStyle = halo;
       ctx.lineWidth = 3.5;
       ctx.globalAlpha = 0.9;

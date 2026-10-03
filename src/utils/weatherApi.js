@@ -182,7 +182,9 @@ async function requestForecast() {
   });
   const response = await fetch(`${API_URL}?${params}`, { signal: timeoutSignal(15000) });
   if (!response.ok) {
-    throw new Error(`Open-Meteo answered ${response.status}`);
+    const error = new Error(`Open-Meteo answered ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   const forecast = toForecast(await response.json(), Date.now());
   try {
