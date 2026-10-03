@@ -402,6 +402,11 @@ export default function App() {
     mapRef.current?.focusOn(spot.lat, spot.lng, 11);
   }, [closeMenu]);
 
+  // once the map has been moved by hand, nothing automatic (late GPS fix, late forecast) moves it again
+  const handleUserMove = useCallback(() => {
+    viewClaimed.current = true;
+  }, []);
+
   // room the floating panels take, so the map fits things into what is left
   const getPadding = useCallback(() => {
     const readout = readoutRef.current;
@@ -472,6 +477,7 @@ export default function App() {
         user={user}
         onPick={handlePick}
         onSpot={handleSpot}
+        onUserMove={handleUserMove}
         getPadding={getPadding}
       />
 

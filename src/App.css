@@ -776,6 +776,8 @@
 }
 
 .map-pin {
+  /* taps go through to the map, so a double-click on the pin still zooms */
+  pointer-events: none;
   width: 14px;
   height: 14px;
   border: 2px solid var(--inv);
@@ -1001,33 +1003,30 @@
     font-size: 12px;
   }
 
-  .route-point {
-    overflow: hidden;
-    margin-top: 5px;
-    font-size: 12px;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+  /* the readout at the top already says what the wind does at the rider's position */
+  .route-point,
+  .advice-text {
+    display: none;
   }
 
   .route-chart {
-    height: 84px;
+    height: 72px;
+  }
+
+  .dock:has(.route-panel) .timebar-bars {
+    height: 46px;
   }
 }
 
-/* short phones: keep the map visible when a route is open */
+/* short phones: the coloured bar still shows the split; the riding speed stays reachable */
 @media (max-width: 720px) and (max-height: 760px) {
-  .route-plan,
-  .route-advice,
-  .route-point {
+  .share-key,
+  .route-advice {
     display: none;
   }
 
   .route-chart {
     height: 64px;
-  }
-
-  .timebar-bars {
-    height: 46px;
   }
 }
 
@@ -1051,11 +1050,6 @@
 
   .route-chart {
     height: 56px;
-  }
-
-  /* too little height for the axis labels: the route panel's own line already says where you are */
-  .route-chart text {
-    display: none;
   }
 
   .route-point {
@@ -1090,7 +1084,7 @@
   }
 
   .route-plan select {
-    min-height: 44px;
+    min-height: 40px;
     padding: 0 6px;
   }
 

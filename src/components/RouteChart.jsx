@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const MIN_WIND_SCALE = 15;
 // Kilometres moved by PageUp / PageDown
 const PAGE_KM = 5;
+// Below this height in px the "headwind" and "tailwind" labels would print over each other
+const MIN_LABELLED_BAND = 24;
 
 /**
  * Two charts sharing the distance axis: the elevation profile and, below it, the wind along the route.
@@ -130,8 +132,12 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
           <path d={shape.head} fill={headColor} />
           <path d={shape.tail} fill={tailColor} />
           <line x1="0" x2={width} y1={shape.baseline} y2={shape.baseline} stroke="var(--ink-3)" strokeWidth="1" />
-          <text x={width - 2} y={shape.windTop + 10} textAnchor="end">headwind</text>
-          <text x={width - 2} y={shape.windTop + shape.windHeight - 1} textAnchor="end">tailwind</text>
+          {shape.windHeight >= MIN_LABELLED_BAND && (
+            <>
+              <text x={width - 2} y={shape.windTop + 10} textAnchor="end">headwind</text>
+              <text x={width - 2} y={shape.windTop + shape.windHeight - 1} textAnchor="end">tailwind</text>
+            </>
+          )}
         </>
       )}
 

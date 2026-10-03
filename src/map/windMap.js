@@ -63,10 +63,11 @@ function chevronImage(color) {
 /**
  * Creates the wind map inside `container`.
  * - onPick(lat, lng): the user tapped the map (anywhere, also outside the forecast area)
+ * - onUserMove(): the user panned or zoomed the map by hand
  * - onSpot(id): the user tapped a spot label
  * - getPadding(): { top, right, bottom, left } px covered by floating panels, so fits avoid them
  */
-export function createWindMap(container, { theme: initialTheme, flowEnabled, onPick, onSpot, getPadding }) {
+export function createWindMap(container, { theme: initialTheme, flowEnabled, onPick, onSpot, onUserMove, getPadding }) {
   let themeName = initialTheme;
   let field = null;
   let baseStyle = null;
@@ -76,6 +77,7 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   let routeStops = null;
   let width = 0;
   let height = 0;
+  let pickTimer = 0;
 
   const spotMarkers = new Map();
   let endMarkers = [];
@@ -319,7 +321,11 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
     installOverlays();
   });
   map.on('resize', sizeCanvases);
-  map.on('movestart', () => flow.setMoving(true));
+  map.on('movestart', (e) => {
+    // movements started by a finger or the mouse carry the original event; the app's own fits do not
+    if (e.originalEvent) onUserMove();
+    flow.setMoving(true);
+  });
   map.on('move', redrawGlyphs);
   map.on('moveend', () => {
     refreshFlow();
@@ -327,9 +333,15 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
     flow.setMoving(false);
     redrawGlyphs();
   });
+  // A tap is reported a moment later, so the first tap of a double-tap zoom does not pin a point.
+  const cancelPick = () => clearTimeout(pickTimer);
   map.on('click', (e) => {
-    onPick(e.lngLat.lat, e.lngLat.lng);
+    const { lat, lng } = e.lngLat;
+    cancelPick();
+    pickTimer = setTimeout(() => onPick(lat, lng), 280);
   });
+  map.on('dblclick', cancelPick);
+  map.on('zoomstart', cancelPick);
   sizeCanvases();
   fitCoverage(false);
   // canvas text needs the web font to be ready, otherwise the first numbers use the fallback face
@@ -437,7 +449,8 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
       requestAnimationFrame(() => {
         if (destroyed) return;
         const p = padding();
-        map.fitBounds([[west, south], [east, north]], { padding: { top: p.top + 24, right: p.right + 14, bottom: p.bottom + 12, left: p.left + 14 } });
+        // extra room at the top and sides for the start and finish labels
+        map.fitBounds([[west, south], [east, north]], { padding: { top: p.top + 58, right: p.right + 40, bottom: p.bottom + 12, left: p.left + 40 } });
       });
     },
 
@@ -511,6 +524,7 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
 
     destroy() {
       destroyed = true;
+      cancelPick();
       window.removeEventListener('online', onOnline);
       flow.destroy();
       map.remove();

@@ -18,16 +18,17 @@ export default function WindMap({
   user,
   onPick,
   onSpot,
+  onUserMove,
   getPadding,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const initial = useRef({ theme, flowEnabled });
-  const handlers = useRef({ onPick, onSpot, getPadding });
+  const handlers = useRef({ onPick, onSpot, onUserMove, getPadding });
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
-    handlers.current = { onPick, onSpot, getPadding };
+    handlers.current = { onPick, onSpot, onUserMove, getPadding };
   });
 
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function WindMap({
         flowEnabled: initial.current.flowEnabled,
         onPick: (lat, lng) => handlers.current.onPick(lat, lng),
         onSpot: (id) => handlers.current.onSpot(id),
+        onUserMove: () => handlers.current.onUserMove(),
         getPadding: () => handlers.current.getPadding(),
       });
     } catch (error) {
