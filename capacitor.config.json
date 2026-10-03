@@ -1,5 +1,11 @@
 {
   "appId": "app.windcycling",
   "appName": "Wind Cycling",
-  "webDir": "dist"
+  "webDir": "dist",
+  "android": {
+    "minWebViewVersion": 111
+  },
+  "server": {
+    "errorPath": "unsupported.html"
+  }
 }
