@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 title Wind Cycling App Starter
 color 0A
 echo ===================================================
