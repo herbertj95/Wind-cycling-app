@@ -1,9 +1,10 @@
-import { Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
+import { CaretDown, CaretUp, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
 import RouteChart from './RouteChart';
 import { RIDE_SPEEDS } from '../utils/routeAnalysis';
 import { formatDuration } from '../utils/time';
 
 const PLAYBACK_RATES = [1, 2.5, 5];
+const DETAILS_ID = 'route-details';
 
 function describePoint(point, wind) {
   const place = `km ${point.distance.toFixed(1)}, ${Math.round(point.ele)} m`;
@@ -26,6 +27,7 @@ const NO_WIND_TEXT = {
  * a plain-language verdict, and the profile you can ride along.
  * - analysis: from analyseRoute
  * - windState: how far the forecast along the route is, 'ready' | 'loading' | 'failed'
+ * - collapsed: only the name, the buttons and the coloured split are shown, to leave the map free
  * - colors: { tail, neutral, head } for the current theme
  */
 export default function RoutePanel({
@@ -42,6 +44,8 @@ export default function RoutePanel({
   rideKmh,
   onRideKmh,
   startLabel,
+  collapsed,
+  onToggleCollapsed,
   colors,
 }) {
   const total = route.totalDistance || 1;
@@ -49,9 +53,21 @@ export default function RoutePanel({
   // a route with no forecast for most of its length gets no wind verdict: there is no data to base one on
   const wind = analysis.outsideKm < total * 0.5 ? analysis.wind : null;
   const pointText = describePoint(route.points[index], wind?.[index]);
+  const parts = [
+    ['Tailwind', analysis.share.tail, colors.tail],
+    ['Across or light', analysis.share.cross, colors.neutral],
+    ['Headwind', analysis.share.head, colors.head],
+  ];
+  const shareBar = (
+    <div className="share-bar" aria-hidden="true">
+      {parts.map(([name, km, color]) => (
+        <i key={name} style={{ flexGrow: Math.max(0.001, km), background: color }} />
+      ))}
+    </div>
+  );
 
   return (
-    <section className="route-panel panel">
+    <section className={collapsed ? 'route-panel panel collapsed' : 'route-panel panel'}>
       <div className="route-head">
         <h2 title={route.name}>{route.name}</h2>
         <span className="route-meta">{route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing</span>
@@ -80,62 +96,73 @@ export default function RoutePanel({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onToggleCollapsed}
+            aria-expanded={!collapsed}
+            aria-controls={DETAILS_ID}
+            aria-label={collapsed ? 'Show the route details' : 'Hide the route details'}
+            title={collapsed ? 'Show the route details' : 'Hide the route details'}
+          >
+            {collapsed ? <CaretUp size={16} aria-hidden="true" /> : <CaretDown size={16} aria-hidden="true" />}
+          </button>
           <button type="button" className="icon-button" onClick={onClear} aria-label="Clear route">
             <X size={16} />
           </button>
         </div>
       </div>
 
-      {!wind && <p className="route-plan">{NO_WIND_TEXT[windState]}</p>}
+      {/* folded away, the split of the route by wind stays as a strip under the name */}
+      {collapsed ? wind && shareBar : (
+        <div className="route-body" id={DETAILS_ID}>
+          <div className="route-summary">
+            {!wind && <p className="route-plan">{NO_WIND_TEXT[windState]}</p>}
 
-      {wind && (
-        <>
-          <p className="route-plan">
-            Leaving {startLabel} at{' '}
-            <select value={rideKmh} onChange={(e) => onRideKmh(Number(e.target.value))} aria-label="Average riding speed">
-              {RIDE_SPEEDS.map((kmh) => (
-                <option key={kmh} value={kmh}>{kmh} km/h</option>
-              ))}
-            </select>
-            , about {formatDuration(analysis.durationHours)}.
-            {analysis.beyondForecast && ' The ride ends after the forecast does.'}
-            {analysis.outsideKm > total * 0.05 && (windState === 'loading' ? ' Part of the wind is still loading.' : ' Part of it has no forecast.')}
-          </p>
+            {wind && (
+              <>
+                <p className="route-plan">
+                  Leaving {startLabel} at{' '}
+                  <select value={rideKmh} onChange={(e) => onRideKmh(Number(e.target.value))} aria-label="Average riding speed">
+                    {RIDE_SPEEDS.map((kmh) => (
+                      <option key={kmh} value={kmh}>{kmh} km/h</option>
+                    ))}
+                  </select>
+                  , about {formatDuration(analysis.durationHours)}.
+                  {analysis.beyondForecast && ' The ride ends after the forecast does.'}
+                  {analysis.outsideKm > total * 0.05 && (windState === 'loading' ? ' Part of the wind is still loading.' : ' Part of it has no forecast.')}
+                </p>
 
-          <Shares analysis={analysis} total={total} colors={colors} />
-        </>
+                {shareBar}
+                <Shares analysis={analysis} parts={parts} total={total} />
+              </>
+            )}
+          </div>
+
+          <div className="route-profile">
+            <div className="route-point">{pointText}</div>
+            <RouteChart
+              route={route}
+              wind={wind}
+              riderIdx={index}
+              onScrub={onScrub}
+              headColor={colors.head}
+              tailColor={colors.tail}
+              valueText={pointText}
+            />
+          </div>
+        </div>
       )}
-
-      <div className="route-point">{pointText}</div>
-      <RouteChart
-        route={route}
-        wind={wind}
-        riderIdx={index}
-        onScrub={onScrub}
-        headColor={colors.head}
-        tailColor={colors.tail}
-        valueText={pointText}
-      />
     </section>
   );
 }
 
-function Shares({ analysis, total, colors }) {
-  const { share, net, advisory } = analysis;
-  const parts = [
-    ['Tailwind', share.tail, colors.tail],
-    ['Across or light', share.cross, colors.neutral],
-    ['Headwind', share.head, colors.head],
-  ];
+function Shares({ analysis, parts, total }) {
+  const { net, advisory } = analysis;
   const AdviceIcon = advisory.tone === 'gusty' || advisory.tone === 'hard' ? Warning : Wind;
 
   return (
     <>
-      <div className="share-bar" aria-hidden="true">
-        {parts.map(([name, km, color]) => (
-          <i key={name} style={{ flexGrow: Math.max(0.001, km), background: color }} />
-        ))}
-      </div>
       <div className="share-key">
         {parts.map(([name, km, color]) => (
           <span key={name}>

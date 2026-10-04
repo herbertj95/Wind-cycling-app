@@ -25,6 +25,7 @@ const HOURS_AHEAD = 45;
 const THEME_KEY = 'wind-theme';
 const VIEW_KEY = 'wind-view-v1';
 const FOCUS_KEY = 'wind-focus-v1';
+const FOLDED_KEY = 'wind-folded-v1';
 const NARROW_SCREEN = 720;
 // ms between rider steps at 1x: a 600-point route plays in a little over a minute
 const RIDE_TICK_MS = 120;
@@ -93,6 +94,16 @@ function initialFocus(places) {
   return { type: 'place', id: places[0]?.id };
 }
 
+// which panels of the dock were left folded away, to give the map more room
+function initialFolded() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOLDED_KEY));
+    return { time: saved?.time === true, route: saved?.route === true };
+  } catch {
+    return { time: false, route: false };
+  }
+}
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 // the focus moves to the rider and remembers what it was on, to go back to when the route is closed
@@ -126,6 +137,8 @@ export default function App() {
   const [menu, setMenu] = useState(null);
   const [routeError, setRouteError] = useState(null);
   const [notice, setNotice] = useState(null);
+  // the time bar and the route details can each be folded down to one line
+  const [folded, setFolded] = useState(initialFolded);
 
   // what the map shows once it has come to rest: { bounds, center, zoom }
   const [view, setView] = useState(null);
@@ -144,6 +157,8 @@ export default function App() {
   const viewClaimed = useRef(false);
   const loadId = useRef(0);
   const riderIdxRef = useRef(0);
+  // counts the times the rider was placed by hand or by opening a route, see the playback below
+  const rideRun = useRef(0);
   const placesRef = useRef(places);
   const viewAsked = useRef(false);
 
@@ -452,6 +467,7 @@ export default function App() {
   // ----- route -----
   const openRoute = useCallback((parsed) => {
     viewClaimed.current = true;
+    rideRun.current++;
     setRoute(parsed);
     setRiderIdx(0);
     setRidePlaying(false);
@@ -493,6 +509,7 @@ export default function App() {
   }, [openRoute]);
 
   const clearRoute = () => {
+    rideRun.current++;
     setRoute(null);
     setRidePlaying(false);
     if (focus.type !== 'rider') return;
@@ -515,12 +532,14 @@ export default function App() {
 
   // moving along the profile by hand always takes over from the playback
   const scrubRoute = useCallback((index) => {
+    rideRun.current++;
     setRidePlaying(false);
     setRiderIdx(index);
     setFocus(toRider);
   }, []);
 
   const toggleRide = () => {
+    rideRun.current++;
     if (isRiding) {
       setRidePlaying(false);
       return;
@@ -532,7 +551,11 @@ export default function App() {
 
   useEffect(() => {
     if (!isRiding) return undefined;
+    const run = rideRun.current;
     const timer = setInterval(() => {
+      // The rider was put somewhere else (a tap on the profile, another route) and this timer has not
+      // been cleared yet: one more step from here would move them off that spot.
+      if (run !== rideRun.current) return;
       const next = Math.min(lastRoutePoint, riderIdxRef.current + 1);
       riderIdxRef.current = next;
       setRiderIdx(next);
@@ -679,6 +702,14 @@ export default function App() {
       // it just will not be remembered
     }
   }, [focus]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOLDED_KEY, JSON.stringify(folded));
+    } catch {
+      // it just will not be remembered
+    }
+  }, [folded]);
 
   // map controls sit above the dock, whatever its height
   useEffect(() => {
@@ -859,6 +890,8 @@ export default function App() {
             rideKmh={rideKmh}
             onRideKmh={setRideKmh}
             startLabel={followingNow ? `now (${formatClock(shownTime, zone)})` : formatDayClock(shownTime, zone)}
+            collapsed={folded.route}
+            onToggleCollapsed={() => setFolded((prev) => ({ ...prev, route: !prev.route }))}
             colors={colors}
           />
         )}
@@ -874,6 +907,8 @@ export default function App() {
           place={barsPlace}
           zone={zone}
           rideStart={followingRider}
+          collapsed={folded.time}
+          onToggleCollapsed={() => setFolded((prev) => ({ ...prev, time: !prev.time }))}
         />
       </div>
     </div>

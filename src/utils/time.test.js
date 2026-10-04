@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEVICE_ZONE, formatClock, formatDay, formatDayClock, formatDuration, hourOfDay, hourStart, validZone, zoneLabel, zoneOffset } from './time';
+import { DEVICE_ZONE, formatClock, formatDay, formatDayClock, formatDuration, hourStart, validZone, zoneLabel, zoneOffset } from './time';
 
 // Saturday 3 October 2026, 18:42:10 UTC. Lisbon is on summer time (UTC+1), Madrid on UTC+2.
 const MOMENT = Date.UTC(2026, 9, 3, 18, 42, 10) / 1000;
@@ -100,19 +100,35 @@ describe('hourStart', () => {
   });
 });
 
-describe('hourOfDay', () => {
-  it('is the hour on the clock of the zone, 0 to 23', () => {
-    expect(hourOfDay(MOMENT, 'Europe/Lisbon')).toBe(19);
-    expect(hourOfDay(MOMENT, 'Asia/Tokyo')).toBe(3);
-    expect(hourOfDay(MOMENT, 'America/Bogota')).toBe(13);
-    expect(hourOfDay(MOMENT, 'Asia/Kathmandu')).toBe(0);
+describe('the days of a run of hours', () => {
+  // what the time bar does: a bar opens a new day when its date differs from the bar before it
+  const dayStarts = (from, count, zone) => {
+    const starts = [];
+    let previous = formatDay(hourStart(from, zone), zone);
+    for (let i = 1; i < count; i++) {
+      const time = hourStart(from, zone) + i * HOUR;
+      const day = formatDay(time, zone);
+      if (day !== previous) starts.push(`${day} ${formatClock(time, zone)}`);
+      previous = day;
+    }
+    return starts;
+  };
+
+  it('opens each day at local midnight', () => {
+    expect(dayStarts(MOMENT, 48, 'Europe/Lisbon')).toEqual(['Sun 4 00:00', 'Mon 5 00:00']);
+    expect(dayStarts(MOMENT, 48, 'Asia/Tokyo')).toEqual(['Mon 5 00:00', 'Tue 6 00:00']);
+    // 18:42 UTC is 00:27 on Sunday in Nepal: the 48 hours from 00:00 hold one more midnight
+    expect(dayStarts(MOMENT, 48, 'Asia/Kathmandu')).toEqual(['Mon 5 00:00']);
   });
 
-  it('is 0 at local midnight, which is where the time bar starts a new day', () => {
-    const lisbonMidnight = Date.UTC(2026, 9, 3, 23, 0, 0) / 1000;
-    expect(hourOfDay(lisbonMidnight, 'Europe/Lisbon')).toBe(0);
-    expect(hourOfDay(lisbonMidnight - HOUR, 'Europe/Lisbon')).toBe(23);
-    expect(hourOfDay(lisbonMidnight, 'Europe/Madrid')).toBe(1);
+  it('opens each day once where clocks go back at midnight: the Azores have two hours called 00:00 that night', () => {
+    const before = Date.UTC(2026, 9, 24, 20, 0, 0) / 1000;
+    expect(dayStarts(before, 30, 'Atlantic/Azores')).toEqual(['Sun 25 00:00', 'Mon 26 00:00']);
+  });
+
+  it('still opens the day where clocks go forward at midnight and there is no 00:00: Santiago, Cairo', () => {
+    expect(dayStarts(Date.UTC(2026, 8, 5, 20, 0, 0) / 1000, 30, 'America/Santiago')).toEqual(['Sun 6 01:00']);
+    expect(dayStarts(Date.UTC(2027, 3, 29, 12, 0, 0) / 1000, 30, 'Africa/Cairo')).toEqual(['Fri 30 01:00']);
   });
 });
 
