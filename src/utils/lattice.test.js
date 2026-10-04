@@ -5,6 +5,7 @@ import {
   stepOf,
   wrapLng,
   nodeKey,
+  finestIndex,
   nodePosition,
   cellAt,
   nodesAround,
@@ -55,18 +56,38 @@ describe('wrapLng', () => {
 });
 
 describe('nodeKey', () => {
-  it('gives every point of a block its own key, at every level', () => {
-    const keys = new Set();
-    let count = 0;
+  it('gives every point of a level its own key', () => {
     for (let level = 0; level <= MAX_LEVEL; level++) {
+      const keys = new Set();
+      let count = 0;
       for (let row = -12; row <= 12; row++) {
         for (let col = -12; col <= 12; col++) {
           keys.add(nodeKey(level, row, col));
           count++;
         }
       }
+      expect(keys.size, `level ${level}`).toBe(count);
     }
-    expect(keys.size).toBe(count);
+  });
+
+  it('names the position, not the level: a point of a coarse level is the same point on the finer ones', () => {
+    // 38.5 N, 9 W
+    expect(nodeKey(2, 77, -18)).toBe(nodeKey(0, 308, -72));
+    expect(nodeKey(2, 77, -18)).toBe(nodeKey(1, 154, -36));
+    expect(nodeKey(3, -5, 7)).toBe(nodeKey(0, -40, 56));
+    expect(nodeKey(MAX_LEVEL, 1, 1)).toBe(nodeKey(0, 2 ** MAX_LEVEL, 2 ** MAX_LEVEL));
+    // and a point that only the finer level has is a different one
+    expect(nodeKey(1, 155, -36)).not.toBe(nodeKey(2, 77, -18));
+    expect(nodeKey(0, 309, -72)).not.toBe(nodeKey(1, 154, -36));
+  });
+
+  it('agrees with where the point is, at every level', () => {
+    for (let level = 0; level <= MAX_LEVEL; level++) {
+      for (const [row, col] of [[3, 5], [-7, -11], [0, 0], [20, -40]]) {
+        const { lat, lng } = nodePosition(level, row, col);
+        expect(nodeKey(level, row, col), `level ${level}`).toBe(nodeKey(0, lat / BASE_STEP, lng / BASE_STEP));
+      }
+    }
   });
 
   it('is the same for a column and that column a whole turn of the globe away', () => {
@@ -85,6 +106,21 @@ describe('nodeKey', () => {
   it('is a safe integer', () => {
     expect(Number.isSafeInteger(nodeKey(MAX_LEVEL, 720, 2879))).toBe(true);
     expect(Number.isSafeInteger(nodeKey(0, -720, -2879))).toBe(true);
+  });
+});
+
+describe('finestIndex', () => {
+  it('is the row and column of the same point on the finest level', () => {
+    expect(finestIndex(0, 308, -72)).toEqual({ row: 308, col: 2880 - 72 });
+    expect(finestIndex(2, 77, -18)).toEqual({ row: 308, col: 2880 - 72 });
+    expect(finestIndex(3, -5, 7)).toEqual({ row: -40, col: 56 });
+  });
+
+  it('gives back the same position', () => {
+    for (const [level, row, col] of [[0, 310, -74], [1, 155, -37], [4, -17, 80], [MAX_LEVEL, 10, -44]]) {
+      const fine = finestIndex(level, row, col);
+      expect(nodePosition(0, fine.row, fine.col)).toEqual(nodePosition(level, row, col));
+    }
   });
 });
 
@@ -283,6 +319,19 @@ describe('nodesAlong', () => {
     const level = nodes[0].level;
     for (const point of route) {
       for (const node of nodesAround(level, point.lat, point.lng)) expect(keys.has(keyOf(node))).toBe(true);
+    }
+  });
+
+  it('covers the whole of a route even when the coarsest level needs more than the allowance', () => {
+    // Lisbon to Beijing along a straight line of positions: far more than a ride, but nothing may be dropped
+    const route = [];
+    for (let i = 0; i <= 600; i++) route.push({ lat: 38.7 + (i / 600) * 1.2, lng: -9.1 + (i / 600) * 125.5 });
+    const nodes = nodesAlong(route, 64);
+    expect(nodes.every((n) => n.level === MAX_LEVEL)).toBe(true);
+    expect(nodes.length).toBeGreaterThan(64);
+    const keys = new Set(nodes.map(keyOf));
+    for (const point of route) {
+      for (const node of nodesAround(MAX_LEVEL, point.lat, point.lng)) expect(keys.has(keyOf(node))).toBe(true);
     }
   });
 

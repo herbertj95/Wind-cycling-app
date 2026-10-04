@@ -1,6 +1,6 @@
 // The wind that has been downloaded: forecast points on the world lattice, asked for as the app needs them
 // (the place in focus, the route, the saved places, the map view) and kept while they are fresh.
-import { MAX_LEVEL, cellAt, nodeKey, nodePosition, stepOf } from './lattice';
+import { MAX_LEVEL, cellAt, finestIndex, nodeKey, nodePosition, stepOf } from './lattice';
 import { pointAt, blendAt } from './windField';
 
 const MINUTE = 60000;
@@ -18,6 +18,8 @@ const PER_HOUR = 3600;
 const MAX_KEPT = 1500;
 const MAX_SAVED = 260;
 const STORAGE_KEY = 'wind-points-v1';
+// what was asked of the service in the last hour, so a restart does not start a fresh allowance
+const SPENT_KEY = 'wind-spent-v1';
 // the single-area forecast that versions before the world lattice kept
 const OLD_STORAGE_KEY = 'wind-forecast-v2';
 // which need is served first when not everything can be asked for at once
@@ -42,6 +44,9 @@ function retryDelay(problem, failures) {
   return Math.min(5 * MINUTE, 15000 * 2 ** (failures - 1));
 }
 
+// a point that came with no hours of wind: it is there, with nothing to read
+const emptied = (point) => ({ ...point, n: 0, speed: [], dir: [], gust: [], temp: [], feels: [] });
+
 /**
  * - fetchPoints(positions): downloads forecast points (see weatherApi)
  * - now(): current time in ms
@@ -51,8 +56,10 @@ function retryDelay(problem, failures) {
  * which gives a new object every time the wind changes, so it can be used as a dependency.
  */
 export function createWindStore({ fetchPoints, now = () => Date.now(), storage = deviceStorage }) {
-  // key -> forecast point, with its place on the lattice (level, row, col)
+  // key -> forecast point, with its place on the finest lattice (row, col). A point serves every level
+  // whose lattice it lies on, whichever level it was asked for.
   const points = new Map();
+  // how many points lie on the lattice of each level
   const perLevel = new Array(MAX_LEVEL + 1).fill(0);
   // levelsUpTo[m]: the levels up to m that hold any point, finest first
   let levelsUpTo = ALL_LEVELS.map(() => []);
@@ -62,13 +69,21 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
   const pending = new Set();
   const failed = new Set();
   // [time, positions] of the requests of the last hour
-  const spent = [];
+  let spent = [];
   const listeners = new Set();
   let version = 0;
   let requests = 0;
+  // Failed attempts in a row. An attempt is everything asked for in one go: it can be several requests,
+  // which fail together in one outage and count once.
   let failures = 0;
+  let attempts = 0;
+  let failedAttempt = 0;
   let retryAt = 0;
   let problem = null;
+  // While the service says its allowance ran out, nothing is asked of it. This outlives the needs that
+  // were refused: moving the map to somewhere else must not start asking again.
+  let limitUntil = 0;
+  let limitProblem = null;
   let pumpTimer = 0;
   let pumpAt = Infinity;
   let saveTimer = 0;
@@ -81,16 +96,24 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     listeners.forEach((listener) => listener());
   };
 
-  function put(key, node, point) {
-    if (!points.has(key)) perLevel[node.level]++;
-    points.set(key, { ...point, level: node.level, row: node.row, col: node.col });
-  }
+  const onLattice = (point, level) => point.row % 2 ** level === 0 && point.col % 2 ** level === 0;
 
   function remove(key) {
     const point = points.get(key);
     if (!point) return;
-    perLevel[point.level]--;
+    ALL_LEVELS.forEach((level) => {
+      if (onLattice(point, level)) perLevel[level]--;
+    });
     points.delete(key);
+  }
+
+  function put(key, node, point) {
+    remove(key);
+    const stored = { ...point, ...finestIndex(node.level, node.row, node.col) };
+    points.set(key, stored);
+    ALL_LEVELS.forEach((level) => {
+      if (onLattice(stored, level)) perLevel[level]++;
+    });
   }
 
   function refreshLevels() {
@@ -135,9 +158,13 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
   function load() {
     try {
       storage.removeItem?.(OLD_STORAGE_KEY);
+      const t = now();
+      const charged = JSON.parse(storage.getItem(SPENT_KEY));
+      if (Array.isArray(charged)) {
+        spent = charged.filter((entry) => Array.isArray(entry) && Number.isFinite(entry[0]) && entry[1] > 0 && entry[0] <= t && t - entry[0] < HOUR);
+      }
       const saved = JSON.parse(storage.getItem(STORAGE_KEY));
       if (saved?.v !== 1 || !Array.isArray(saved.points)) return;
-      const t = now();
       for (const entry of saved.points) {
         if (!Array.isArray(entry)) continue;
         const [level, row, col, t0, zone, fetchedAt, speed, dir, gust, temp, feels] = entry;
@@ -166,7 +193,8 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     }
     const rows = keys.slice(0, MAX_SAVED).map((key) => {
       const p = points.get(key);
-      return [p.level, p.row, p.col, p.t0, p.zone, p.fetchedAt, p.speed, p.dir, p.gust, p.temp, p.feels];
+      // the 0 is the lattice level the row and the column are counted on
+      return [0, p.row, p.col, p.t0, p.zone, p.fetchedAt, p.speed, p.dir, p.gust, p.temp, p.feels];
     });
     for (const count of [rows.length, Math.min(rows.length, 60)]) {
       try {
@@ -181,6 +209,14 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
   function scheduleSave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 1500);
+  }
+
+  function saveSpent() {
+    try {
+      storage.setItem(SPENT_KEY, JSON.stringify(spent));
+    } catch {
+      // the allowance is then only remembered until the app is closed
+    }
   }
 
   function schedule(delay) {
@@ -207,28 +243,48 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     return { minute: PER_MINUTE - lastMinute, hour: PER_HOUR - lastHour };
   }
 
-  function send(batch, t) {
+  function send(batch, t, attempt) {
     requests++;
-    spent.push([t, batch.length]);
+    const charge = [t, batch.length];
+    spent.push(charge);
+    saveSpent();
     batch.forEach(([key]) => pending.add(key));
     fetchPoints(batch.map(([, node]) => nodePosition(node.level, node.row, node.col)))
       .then(
         (list) => {
+          const arrived = now();
           batch.forEach(([key, node], i) => {
-            put(key, node, list[i]);
+            // A forecast that is already over when it arrives (a device clock days ahead, an answer with a
+            // hole in its first hours) is kept as a point with nothing to read. Dropped, it would be
+            // asked for again every minute.
+            put(key, node, expired(list[i], arrived) ? emptied(list[i]) : list[i]);
             failed.delete(key);
           });
           trim();
           refreshLevels();
           failures = 0;
+          limitUntil = 0;
           if (failed.size === 0) problem = null;
           if (!destroyed) scheduleSave();
         },
         (error) => {
           batch.forEach(([key]) => failed.add(key));
-          failures++;
+          if (attempt > failedAttempt) {
+            failedAttempt = attempt;
+            failures++;
+          }
           problem = describe(error);
           retryAt = now() + retryDelay(problem, failures);
+          if (problem.kind === 'limit') {
+            limitUntil = retryAt;
+            limitProblem = problem;
+          }
+          // a request that never got an answer did not reach the service: it is not held against the allowance
+          if (error instanceof TypeError) {
+            const at = spent.indexOf(charge);
+            if (at >= 0) spent.splice(at, 1);
+            saveSpent();
+          }
         },
       )
       .finally(() => {
@@ -240,19 +296,22 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
       });
   }
 
-  /** Asks for whatever is needed and missing or stale. `force` also retries failed points before their waiting time is up. */
-  function pump(force = false) {
+  /**
+   * Asks for whatever is needed and missing or stale.
+   * - retryFailed: also try the points that failed before their waiting time is up
+   * - ignoreLimit: also ask while the service says its allowance ran out (somebody pressed "Try again")
+   */
+  function pump({ retryFailed = false, ignoreLimit = false } = {}) {
     if (destroyed) return;
     const t = now();
     const need = [];
     const asked = new Set();
     const seen = new Set();
     let heldFor = Infinity;
-    let waiting = false;
+    let waitFor = Infinity;
     let changed = false;
-    // once the service has said its allowance ran out, nothing is asked of it until the wait is over:
     // what is needed meanwhile counts as failed, so the app can say why it is not coming
-    const toldToWait = problem?.kind === 'limit' && !force && t < retryAt;
+    const toldToWait = !ignoreLimit && t < limitUntil;
     for (const name of ORDER) {
       const wanted = demands.get(name);
       if (!wanted) continue;
@@ -265,12 +324,15 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
         if (pending.has(key)) continue;
         const point = points.get(key);
         if (point && t - point.fetchedAt < STALE_MS) continue;
-        if (toldToWait && !failed.has(key)) {
+        if (toldToWait) {
+          if (!failed.has(key) || problem !== limitProblem) changed = true;
           failed.add(key);
-          changed = true;
+          problem = limitProblem;
+          waitFor = Math.min(waitFor, limitUntil - t);
+          continue;
         }
-        if (failed.has(key) && !force && t < retryAt) {
-          waiting = true;
+        if (failed.has(key) && !retryFailed && t < retryAt) {
+          waitFor = Math.min(waitFor, retryAt - t);
           continue;
         }
         need.push([key, node]);
@@ -288,30 +350,34 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
 
     const room = allowance(t);
     let free = Math.min(room.minute, room.hour);
+    let attempt = 0;
     while (need.length > 0 && requests < MAX_REQUESTS && free > 0) {
       const batch = need.splice(0, Math.min(CHUNK, free));
       free -= batch.length;
-      send(batch, t);
+      attempt = attempt || ++attempts;
+      send(batch, t, attempt);
       changed = true;
     }
 
     // what could not be asked for yet is tried again when it can be; a finished request also calls back here
-    let again = heldFor;
+    let again = Math.min(heldFor, waitFor < Infinity ? Math.max(1000, waitFor) : Infinity);
     if (need.length > 0 && free <= 0) {
       if (room.hour <= 0) {
         // The app's own allowance for the hour is spent. That can last a long while, so it is reported
         // like the service's own refusal instead of leaving the app looking as if it were still loading.
         need.forEach(([key]) => failed.add(key));
-        problem = { kind: 'limit', limit: 'hour' };
-        retryAt = t + 5 * MINUTE;
-        waiting = true;
+        limitProblem = { kind: 'limit', limit: 'hour' };
+        problem = limitProblem;
+        // look again in five minutes, or as soon as the oldest request of the hour drops out of it
+        const roomAt = spent.length > 0 ? spent[0][0] + HOUR + 50 : t;
+        limitUntil = Math.max(t + 1000, Math.min(t + 5 * MINUTE, roomAt));
+        again = Math.min(again, limitUntil - t);
         changed = true;
       } else {
         const oldest = spent.find(([at]) => t - at < MINUTE);
         again = Math.min(again, oldest ? MINUTE - (t - oldest[0]) + 50 : MINUTE);
       }
     }
-    if (waiting) again = Math.min(again, Math.max(1000, retryAt - t));
     if (again < Infinity) schedule(again);
     if (changed) emit();
   }
@@ -332,9 +398,13 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     /**
      * The wind at one moment, for reading many positions: { time, sample(lat, lng) }.
      * Each lattice point is worked out once, however many positions are read around it.
+     * Where both are there, a fresh forecast on a coarser lattice is preferred to an old one on a finer
+     * lattice (a place looked at hours ago, or kept from the last time the app was open): the map should
+     * not show yesterday's wind in one corner. The old one is still better than nothing.
      */
     frame(time) {
       const levels = levelsUpTo[MAX_LEVEL];
+      const freshFrom = now() - STALE_MS;
       const cache = new Map();
       const valueAt = (key) => {
         let value = cache.get(key);
@@ -345,7 +415,11 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
         }
         return value;
       };
-      return { time, sample: (lat, lng) => blendAt(lat, lng, levels, valueAt) };
+      const freshAt = (key) => {
+        const value = valueAt(key);
+        return value && value.fetchedAt >= freshFrom ? value : null;
+      };
+      return { time, sample: (lat, lng) => blendAt(lat, lng, levels, freshAt) ?? blendAt(lat, lng, levels, valueAt) };
     },
 
     /** Time zone of the loaded forecast point nearest to a position, or null when none is loaded around it. */
@@ -400,15 +474,19 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
       schedule(delay);
     },
 
-    /** Tries the failed points again now. */
+    /** Tries the failed points again now, also when the service has said to wait: somebody asked for it. */
     retry() {
-      pump(true);
+      pump({ retryFailed: true, ignoreLimit: true });
     },
 
-    /** Drops what has expired and asks again for what has gone stale. Meant to be called every minute or so. */
-    refresh(force = false) {
+    /**
+     * Drops what has expired and asks again for what has gone stale. Meant to be called every minute or so.
+     * `eager` also retries what failed before its waiting time is up, for when the app comes back to the
+     * front; it does not ask while the service says its allowance ran out.
+     */
+    refresh(eager = false) {
       if (prune(now())) emit();
-      pump(force);
+      pump({ retryFailed: eager });
     },
 
     subscribe(listener) {

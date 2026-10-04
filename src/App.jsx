@@ -9,7 +9,7 @@ import PlacesMenu from './components/PlacesMenu';
 import { useWind, useNow } from './hooks/useWind';
 import { STALE_MS } from './utils/windStore';
 import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds } from './utils/lattice';
-import { loadPlaces, makePlace, savePlaces } from './utils/places';
+import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
 import { analyseRoute } from './utils/routeAnalysis';
 import { parseGpxData } from './utils/gpxParser';
 import { CALM_KMH } from './utils/wind';
@@ -168,6 +168,19 @@ export default function App() {
     placesRef.current = next;
     setPlaces(next);
     savePlaces(next);
+  }, []);
+
+  // Places saved or removed in another window of the app are taken over here. Without this, the next
+  // change made in this window would write its older list over them.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== PLACES_KEY) return;
+      const latest = loadPlaces();
+      placesRef.current = latest;
+      setPlaces(latest);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   // ----- focus -----

@@ -88,7 +88,8 @@ export async function fetchPoints(points) {
 
 /**
  * Places whose name matches `query`, best match first: [{ id, name, region, lat, lng, zone }].
- * `region` tells two places with the same name apart, e.g. "Catalonia, Spain".
+ * `region` tells two places with the same name apart, e.g. "Catalonia, Spain". When two of them are in
+ * the same region as well, the district is added in front.
  * `signal` cancels the search, for when the query has changed meanwhile.
  */
 export async function searchPlaces(query, signal) {
@@ -96,15 +97,19 @@ export async function searchPlaces(query, signal) {
   const response = await fetch(`${SEARCH_URL}?${params}`, { signal: timeoutSignal(10000, signal) });
   if (!response.ok) throw await httpError(response);
   const json = await response.json();
-  const results = Array.isArray(json?.results) ? json.results : [];
-  return results
-    .filter((r) => r && typeof r.name === 'string' && finite(r.latitude) && finite(r.longitude))
-    .map((r, i) => ({
-      id: r.id ?? `result-${i}`,
-      name: r.name,
-      region: [r.admin1, r.country].filter((part) => part && part !== r.name).join(', '),
-      lat: r.latitude,
-      lng: r.longitude,
-      zone: typeof r.timezone === 'string' ? r.timezone : null,
-    }));
+  const results = (Array.isArray(json?.results) ? json.results : []).filter(
+    (r) => r && typeof r.name === 'string' && finite(r.latitude) && finite(r.longitude),
+  );
+  const regionOf = (r, ...closer) => [...new Set([...closer, r.admin1, r.country])].filter((part) => part && part !== r.name).join(', ');
+  const labelOf = (r) => `${r.name}|${regionOf(r)}`;
+  const timesSeen = new Map();
+  results.forEach((r) => timesSeen.set(labelOf(r), (timesSeen.get(labelOf(r)) ?? 0) + 1));
+  return results.map((r, i) => ({
+    id: r.id ?? `result-${i}`,
+    name: r.name,
+    region: timesSeen.get(labelOf(r)) > 1 ? regionOf(r, r.admin3, r.admin2) : regionOf(r),
+    lat: r.latitude,
+    lng: r.longitude,
+    zone: typeof r.timezone === 'string' ? r.timezone : null,
+  }));
 }

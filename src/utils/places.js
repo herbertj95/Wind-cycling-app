@@ -91,7 +91,8 @@ export const HOME_BOUNDS = (() => {
   };
 })();
 
-const STORAGE_KEY = 'wind-places-v1';
+/** Where the places are kept on the device. */
+export const PLACES_KEY = 'wind-places-v1';
 
 const isPlace = (p) =>
   p && typeof p.id === 'string' && typeof p.name === 'string' && Number.isFinite(p.lat) && Number.isFinite(p.lng);
@@ -99,7 +100,7 @@ const isPlace = (p) =>
 /** The rider's places, or the default set when none were saved on this device. */
 export function loadPlaces() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const saved = JSON.parse(localStorage.getItem(PLACES_KEY));
     if (Array.isArray(saved) && saved.every(isPlace)) return saved;
   } catch {
     // unreadable or unavailable storage: start from the defaults
@@ -109,7 +110,7 @@ export function loadPlaces() {
 
 export function savePlaces(places) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
+    localStorage.setItem(PLACES_KEY, JSON.stringify(places));
   } catch {
     // the places just will not be remembered
   }

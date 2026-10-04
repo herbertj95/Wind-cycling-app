@@ -327,6 +327,30 @@ describe('searchPlaces', () => {
     expect(results.map((r) => r.zone)).toEqual(['Asia/Tokyo', null, null]);
   });
 
+  it('adds the district to tell apart two places with the same name in the same region', async () => {
+    vi.stubGlobal('fetch', answering({
+      results: [
+        { id: 1, name: 'Mallorca', latitude: 9.9, longitude: -84.1, country: 'Costa Rica', admin1: 'Provincia de San José', admin2: 'Escazú' },
+        { id: 2, name: 'Mallorca', latitude: 9.6, longitude: -84.0, country: 'Costa Rica', admin1: 'Provincia de San José', admin2: 'Aserrí', admin3: 'Vuelta de Jorco' },
+        { id: 3, name: 'Mallorca', latitude: 15.6, longitude: 120.9, country: 'Philippines', admin1: 'Central Luzon', admin2: 'Province of Nueva Ecija' },
+        // twins with nothing closer to tell them apart keep the region they have
+        { id: 4, name: 'Twin', latitude: 1, longitude: 1, country: 'Nowhere', admin1: 'North' },
+        { id: 5, name: 'Twin', latitude: 2, longitude: 2, country: 'Nowhere', admin1: 'North' },
+      ],
+    }));
+
+    const results = await searchPlaces('mallorca');
+
+    expect(results.map((r) => r.region)).toEqual([
+      'Escazú, Provincia de San José, Costa Rica',
+      'Vuelta de Jorco, Aserrí, Provincia de San José, Costa Rica',
+      // the only one in its region: the district would only be clutter
+      'Central Luzon, Philippines',
+      'North, Nowhere',
+      'North, Nowhere',
+    ]);
+  });
+
   it('gives an empty list when nothing matches, which Open-Meteo answers without a results field', async () => {
     vi.stubGlobal('fetch', answering({ generationtime_ms: 0.5 }));
     expect(await searchPlaces('qqqqqq')).toEqual([]);

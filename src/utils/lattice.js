@@ -1,6 +1,7 @@
 // The forecast is requested on a fixed lattice over the whole globe, so views that overlap share points
 // and a point that was downloaded once is not asked for again while it is fresh.
 // Level 0 has a point every 0.125°; each level above doubles the spacing, for when the map is zoomed out.
+// Every point of a level is also a point of all the finer levels.
 
 export const BASE_STEP = 0.125;
 export const MAX_LEVEL = 5; // 4° between points
@@ -20,11 +21,20 @@ export function wrapLng(lng) {
 /**
  * One number for a lattice point. `row` counts steps of latitude from the equator, `col` steps of
  * longitude from Greenwich; columns wrap, so col and col + 360° are the same point.
+ * The key names the position, not the level: the point at 38.5° N, 9° W has the same key at level 0
+ * (row 308, col -72) and at level 2 (row 77, col -18), so a forecast downloaded for one level is there
+ * for the others.
  */
 export function nodeKey(level, row, col) {
-  const columns = columnsOf(level);
-  const wrapped = ((col % columns) + columns) % columns;
-  return level * 0x1000000 + (row + 0x800) * 0x1000 + wrapped;
+  const { row: fineRow, col: fineCol } = finestIndex(level, row, col);
+  return (fineRow + 0x800) * 0x1000 + fineCol;
+}
+
+/** The row and column of a lattice point on the finest level, the column brought into one turn of the globe. */
+export function finestIndex(level, row, col) {
+  const scale = 2 ** level;
+  const columns = columnsOf(0);
+  return { row: row * scale, col: (((col * scale) % columns) + columns) % columns };
 }
 
 /** Where a lattice point is. */
@@ -102,7 +112,8 @@ export function nodesAlong(points, maxNodes) {
       for (const node of nodesAround(level, point.lat, point.lng)) {
         found.set(nodeKey(node.level, node.row, node.col), node);
       }
-      if (found.size > maxNodes) break;
+      // too many at this level: try the next one, unless this is the coarsest there is
+      if (found.size > maxNodes && level < MAX_LEVEL) break;
     }
     if (found.size <= maxNodes || level === MAX_LEVEL) return [...found.values()];
   }

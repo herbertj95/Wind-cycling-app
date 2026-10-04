@@ -215,9 +215,11 @@ describe('blendAt', () => {
   });
 
   it('falls back on a coarser level only when the finer one is incomplete', () => {
-    // the same spot is inside the level 1 cell 38.5..38.75 north, -9.25..-9 east
+    // The same spot is inside the level 1 cell 38.5..38.75 north, -9.25..-9 east. Its north-west corner
+    // is the north-west corner of the fine cell too: one point, whichever level reads it.
+    expect(nodeKey(1, 155, -37)).toBe(NW);
     const values = corners(value(10, 0), value(10, 0), value(10, 0), value(10, 0));
-    for (const [row, col] of [[154, -37], [154, -36], [155, -37], [155, -36]]) values.set(nodeKey(1, row, col), value(50, 90));
+    for (const [row, col] of [[154, -37], [154, -36], [155, -36]]) values.set(nodeKey(1, row, col), value(50, 0));
 
     const fine = blendAt(38.7, -9.2, [0, 1], reader(values));
     expect(fine.speed).toBeCloseTo(10, 9);
@@ -225,8 +227,9 @@ describe('blendAt', () => {
 
     values.delete(SW);
     const coarse = blendAt(38.7, -9.2, [0, 1], reader(values));
-    expect(coarse.speed).toBeCloseTo(50, 9);
     expect(coarse.level).toBe(1);
+    // a fifth of the way east and four fifths of the way north in the coarse cell: mostly the shared corner
+    expect(coarse.speed).toBeCloseTo(50 * 0.16 + 50 * 0.04 + 10 * 0.64 + 50 * 0.16, 9);
     // and not at all when only the finest level may be used
     expect(blendAt(38.7, -9.2, [0], reader(values))).toBeNull();
   });

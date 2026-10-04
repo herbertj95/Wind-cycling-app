@@ -8,6 +8,7 @@ const MINUTE_MS = 60000;
 // the tests start at 00:20
 const START = T0 * 1000 + 20 * MINUTE_MS;
 const STORAGE_KEY = 'wind-points-v1';
+const SPENT_KEY = 'wind-spent-v1';
 
 /**
  * Stand-in for the forecast service. Every position gets `hours` hourly values starting three hours before
@@ -160,6 +161,38 @@ describe('downloading what is needed', () => {
     expect(store.getSnapshot().state(LISBON)).toBe('ready');
   });
 
+  it('does not download a position again for a coarser lattice that shares it', async () => {
+    const bounds = { south: 38.5, north: 39, west: -9.5, east: -9 };
+    const fine = nodesInBounds(0, bounds);
+    const coarse = nodesInBounds(1, bounds);
+    const coarser = nodesInBounds(2, bounds);
+    store.want('view', fine);
+    await settle();
+    expect(service.asked()).toBe(fine.length);
+
+    // every point of the coarser lattices over the same area is one the finest lattice has
+    expect(store.getSnapshot().state(coarse)).toBe('ready');
+    expect(store.getSnapshot().state(coarser)).toBe('ready');
+    store.want('view', coarse);
+    store.want('route', coarser);
+    await settle();
+    expect(service.asked()).toBe(fine.length);
+    // and the wind can be read on the coarser lattice from them
+    expect(store.getSnapshot().sample(38.7, -9.2, nowSeconds()).level).toBe(0);
+  });
+
+  it('asks only for the positions a finer lattice adds to a coarser one', async () => {
+    const bounds = { south: 38.5, north: 39, west: -9.5, east: -9 };
+    const coarse = nodesInBounds(1, bounds);
+    const fine = nodesInBounds(0, bounds);
+    store.want('view', coarse);
+    await settle();
+    store.want('view', fine);
+    await settle();
+    expect(service.asked()).toBe(fine.length);
+    expect(service.calls[1]).toHaveLength(fine.length - coarse.length);
+  });
+
   it('never asks for a point beyond the poles', async () => {
     store.want('focus', [{ level: 0, row: 721, col: 0 }, { level: 5, row: -23, col: 0 }, { level: 0, row: 720, col: 0 }]);
     await settle();
@@ -198,6 +231,32 @@ describe('keeping the forecast fresh', () => {
     release();
     await settle();
     expect(store.getSnapshot().sample(38.73, -9.14, nowSeconds(), POINT).fetchedAt).toBe(Date.now());
+  });
+
+  it('does not keep asking for a point whose forecast is already over when it arrives', async () => {
+    // an answer that only reaches two hours back from the first hour: nothing in it is about now
+    store.destroy();
+    service = makeService(2);
+    store = newStore();
+    store.want('focus', LISBON);
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().state(LISBON)).toBe('ready');
+    expect(store.getSnapshot().sample(38.73, -9.14, nowSeconds(), { late: true })).toBeNull();
+
+    // the minute ticks find nothing to drop and nothing to ask for
+    for (let minute = 0; minute < 30; minute++) {
+      await settle(MINUTE_MS);
+      store.refresh();
+    }
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(1);
+
+    // an hour later it is due again, like any other point
+    await settle(31 * MINUTE_MS);
+    store.refresh();
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(2);
   });
 
   it('only renews what is still needed', async () => {
@@ -292,6 +351,77 @@ describe('staying inside the allowance of the service', () => {
     expect(service.asked()).toBe(3650);
     expect(store.getSnapshot().state(more)).toBe('ready');
     expect(store.getSnapshot().problem).toBeNull();
+  });
+
+  it('remembers what was asked of the service across a restart', async () => {
+    for (let minute = 0; minute < 9; minute++) {
+      store.want('view', row(400, 100 + minute));
+      await settle(61000);
+    }
+    expect(service.asked()).toBe(3600);
+    expect(JSON.parse(storage.data[SPENT_KEY]).reduce((total, [, positions]) => total + positions, 0)).toBe(3600);
+
+    // the app is closed and opened again: the hour's allowance is still spent
+    store.destroy();
+    store = newStore();
+    const more = row(50, 300);
+    store.want('view', more);
+    await settle(1000);
+    expect(service.asked()).toBe(3600);
+    expect(store.getSnapshot().state(more)).toBe('failed');
+    expect(store.getSnapshot().problem).toEqual({ kind: 'limit', limit: 'hour' });
+
+    await settle(52 * MINUTE_MS);
+    expect(service.asked()).toBe(3650);
+    expect(store.getSnapshot().state(more)).toBe('ready');
+  });
+
+  it('ignores a record of the allowance that cannot be right', async () => {
+    const future = START + 5 * MINUTE_MS;
+    storage.data[SPENT_KEY] = JSON.stringify([[START - 2 * HOUR * 1000, 3000], [future, 3000], 'x', [START - 1000, -5], null]);
+    store.destroy();
+    store = newStore();
+    store.want('view', row(400));
+    await settle();
+    expect(service.asked()).toBe(400);
+  });
+
+  it('does not charge the allowance for requests that never reached the service', async () => {
+    service.fail = new TypeError('Failed to fetch');
+    store.want('view', row(300));
+    await settle();
+    // out of coverage, pressing "Try again" over and over
+    for (let i = 0; i < 20; i++) {
+      store.retry();
+      await settle(2000);
+    }
+    expect(service.asked()).toBeGreaterThan(3600);
+    expect(store.getSnapshot().problem).toEqual({ kind: 'offline' });
+
+    // back in coverage, everything is asked for at once
+    service.fail = null;
+    const before = service.asked();
+    store.retry();
+    await settle();
+    expect(service.asked() - before).toBe(300);
+    expect(store.getSnapshot().state(row(300))).toBe('ready');
+    expect(store.getSnapshot().problem).toBeNull();
+  });
+
+  it('does charge it for requests the service answered with an error', async () => {
+    service.fail = httpError(503);
+    store.want('view', row(300));
+    await settle();
+    expect(service.asked()).toBe(300);
+
+    // 100 positions are left for this minute, whatever is tried
+    service.fail = null;
+    store.retry();
+    await settle();
+    expect(service.asked()).toBe(400);
+    await settle(61000);
+    expect(service.asked()).toBe(600);
+    expect(store.getSnapshot().state(row(300))).toBe('ready');
   });
 
   it('serves the place in focus before the route, the saved places and the view', async () => {
@@ -410,6 +540,25 @@ describe('when a download fails', () => {
     expect(service.fetchPoints).toHaveBeenCalledTimes(3);
   });
 
+  it('counts an attempt once, however many requests it took', async () => {
+    // 250 positions are three requests; all three fail in the same outage
+    service.fail = new TypeError('Failed to fetch');
+    store.want('view', row(250));
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
+
+    // the second attempt comes after 15 seconds, not after the minute that three failures would mean
+    await settle(14000);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
+    await settle(1500);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(6);
+    // and the third after 30 more
+    await settle(29000);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(6);
+    await settle(1500);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(9);
+  });
+
   it('waits out the allowance that ran out: over a minute for the one per minute', async () => {
     service.fail = httpError(429, { limit: 'minute' });
     store.want('focus', LISBON);
@@ -471,6 +620,63 @@ describe('when a download fails', () => {
     expect(service.fetchPoints).toHaveBeenCalledTimes(2);
     expect(store.getSnapshot().state(elsewhere)).toBe('ready');
     expect(store.getSnapshot().problem).toBeNull();
+  });
+
+  it('keeps waiting when the map moves on from the view the service refused', async () => {
+    store.want('focus', LISBON);
+    await settle();
+    service.fail = httpError(429, { limit: 'hour' });
+    store.want('view', row(40, 200));
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(2);
+    service.fail = null;
+
+    // ten pans in the next minute: the refused view is dropped each time and a new one is needed
+    for (let pan = 0; pan < 10; pan++) {
+      store.want('view', []);
+      await settle(1000);
+      store.want('view', row(40, 300 + pan), 350);
+      await settle(5000);
+    }
+    expect(service.fetchPoints).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().state(row(40, 309))).toBe('failed');
+    expect(store.getSnapshot().problem).toEqual({ kind: 'limit', limit: 'hour' });
+    // the place in focus was loaded before and is still read
+    expect(store.getSnapshot().sample(38.73, -9.14, nowSeconds(), POINT)).not.toBeNull();
+
+    // five minutes after the refusal the view on screen is asked for, once
+    await settle(4 * MINUTE_MS);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
+    expect(service.calls.at(-1)).toEqual(positions(row(40, 309)));
+    expect(store.getSnapshot().problem).toBeNull();
+  });
+
+  it('does not ask on coming back to the front while the service says to wait', async () => {
+    service.fail = httpError(429, { limit: 'day' });
+    store.want('focus', LISBON);
+    await settle();
+    service.fail = null;
+    // the screen comes on again and again
+    for (let i = 0; i < 5; i++) {
+      store.refresh(true);
+      await settle(MINUTE_MS);
+    }
+    expect(service.fetchPoints).toHaveBeenCalledTimes(1);
+    // after the half hour a daily refusal asks for, it does
+    await settle(26 * MINUTE_MS);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().state(LISBON)).toBe('ready');
+  });
+
+  it('tries again on coming back to the front after an ordinary failure', async () => {
+    service.fail = new TypeError('Failed to fetch');
+    store.want('focus', LISBON);
+    await settle();
+    service.fail = null;
+    store.refresh(true);
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().state(LISBON)).toBe('ready');
   });
 
   it('can be told to try before the wait the service asked for is over', async () => {
@@ -563,6 +769,33 @@ describe('reading the wind', () => {
     // nothing is drawn where nothing is loaded, or after the forecast ends
     expect(frame.sample(41.98, 2.82)).toBeNull();
     expect(wind.frame(nowSeconds() + 60 * HOUR).sample(38.7, -9.2)).toBeNull();
+  });
+
+  it('draws the map from a fresh coarse forecast rather than an old fine one', async () => {
+    // a place looked at two hours ago, and not needed since
+    store.want('focus', LISBON);
+    await settle();
+    store.want('focus', []);
+    await settle(2 * HOUR * 1000);
+    // the map is now zoomed out over it
+    store.want('view', nodesAround(3, 38.73, -9.14));
+    await settle();
+    const wind = store.getSnapshot();
+
+    expect(wind.frame(nowSeconds()).sample(38.73, -9.14).level).toBe(3);
+    expect(wind.frame(nowSeconds()).sample(38.73, -9.14).fetchedAt).toBe(Date.now());
+    // a reading for the place itself is still taken from the points around it
+    expect(wind.sample(38.73, -9.14, nowSeconds(), POINT).fetchedAt).toBe(START);
+  });
+
+  it('draws the map from an old forecast when there is nothing fresher', async () => {
+    store.want('focus', LISBON);
+    await settle();
+    store.want('focus', []);
+    await settle(2 * HOUR * 1000);
+    const drawn = store.getSnapshot().frame(nowSeconds()).sample(38.73, -9.14);
+    expect(drawn.level).toBe(0);
+    expect(drawn.fetchedAt).toBe(START);
   });
 
   it('knows the time zone of the nearest loaded point', async () => {

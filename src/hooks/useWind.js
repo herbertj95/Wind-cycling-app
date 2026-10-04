@@ -19,7 +19,7 @@ export function useWind() {
     const tick = () => document.visibilityState === 'visible' && windStore.refresh();
     const timer = setInterval(tick, 60000);
     const onVisible = () => document.visibilityState === 'visible' && windStore.refresh(true);
-    const onOnline = () => windStore.retry();
+    const onOnline = () => windStore.refresh(true);
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
     return () => {
