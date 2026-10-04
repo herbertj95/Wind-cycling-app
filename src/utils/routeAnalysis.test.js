@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyseRoute, RIDE_SPEEDS } from './routeAnalysis';
+import { analyseRoute, bandScale, RIDE_SPEEDS } from './routeAnalysis';
 import { nodeKey } from './lattice';
 import { pointAt, blendAt } from './windField';
 import { angleDiff, windComponents } from './wind';
@@ -92,6 +92,45 @@ describe('RIDE_SPEEDS', () => {
       expect(kmh).toBeGreaterThan(0);
       if (i > 0) expect(kmh).toBeGreaterThan(RIDE_SPEEDS[i - 1]);
     });
+  });
+});
+
+describe('bandScale', () => {
+  const heads = (...values) => values.map((head) => ({ head }));
+
+  it('is 15 km/h for a calm route, so a breeze does not fill the chart', () => {
+    expect(bandScale(heads(0, 0, 0))).toBe(15);
+    expect(bandScale(heads(3, -6, 7.2))).toBe(15);
+    expect(bandScale([])).toBe(15);
+  });
+
+  it('grows in steps of 5 km/h to hold the strongest wind along the road', () => {
+    expect(bandScale(heads(4, 15))).toBe(15);
+    expect(bandScale(heads(4, 15.2))).toBe(20);
+    expect(bandScale(heads(19.9, -3))).toBe(20);
+    expect(bandScale(heads(23, 10))).toBe(25);
+    expect(bandScale(heads(41, 2))).toBe(45);
+  });
+
+  it('counts a tailwind like a headwind: the scale is the same up and down', () => {
+    expect(bandScale(heads(5, -23))).toBe(25);
+    expect(bandScale(heads(-31))).toBe(35);
+  });
+
+  it('is not pushed a step up by rounding noise on a round value', () => {
+    expect(bandScale(heads(15.0000000001))).toBe(15);
+    expect(bandScale(heads(-20.0000000001))).toBe(20);
+  });
+
+  it('skips points without a reading', () => {
+    expect(bandScale(heads(12, NaN, undefined, 18))).toBe(20);
+  });
+
+  it('holds every point of an analysed route', () => {
+    const result = analyseRoute(northbound(), steady(27, 0, 40), 0, 25);
+    const scale = bandScale(result.wind);
+    expect(scale).toBe(30);
+    for (const w of result.wind) expect(Math.abs(w.head)).toBeLessThanOrEqual(scale);
   });
 });
 

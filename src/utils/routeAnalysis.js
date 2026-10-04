@@ -12,7 +12,27 @@ const STRONG_CROSS_GUST_KMH = 35;
 // With gusts from this strength on, a day of light wind is not described as calm
 const LIGHT_WIND_GUST_KMH = 30;
 
+// The wind band under the profile is drawn against a round number of km/h, and at least this many,
+// so that a calm day does not fill the chart
+const MIN_BAND_KMH = 15;
+const BAND_STEP_KMH = 5;
+
 const round = (n) => Math.round(n);
+
+/**
+ * The km/h that the full height of the wind band under the profile stands for, the same upwards
+ * (headwind) as downwards (tailwind): the strongest head or tailwind of the route, rounded up to a
+ * multiple of 5, and never less than 15.
+ * - wind: the per-point analysis from analyseRoute
+ */
+export function bandScale(wind) {
+  let strongest = 0;
+  for (const w of wind) {
+    if (Number.isFinite(w.head)) strongest = Math.max(strongest, Math.abs(w.head));
+  }
+  // the small allowance keeps a wind of exactly 15 km/h, worked out as 15.0000001, on the 15 scale
+  return Math.max(MIN_BAND_KMH, Math.ceil((strongest - 1e-6) / BAND_STEP_KMH) * BAND_STEP_KMH);
+}
 
 function buildAdvisory(a, totalKm) {
   // one gusty reading at a single point is not a gusty ride: it has to last for a real stretch of road

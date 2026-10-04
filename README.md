@@ -119,7 +119,7 @@ Then build and run from Android Studio.
 
 The strip and the percentages split the route by what you feel along the road: **tailwind** (blue) and **headwind** (red) count from 5 km/h along your direction of travel; everything below that, crosswind included, is **across or light** (grey). The same colours are on the route on the map.
 
-Under the elevation profile, the band shows that head or tail component kilometre by kilometre: red above the line is wind against you, blue below it is wind behind you, and the height is its strength. The full height stands for 15 km/h, or for the strongest value on the route when that is more, so on a calm day the band stays thin. There is no grey in it: the grey stretches of the strip are where the band stays within 5 km/h of the line.
+Under the elevation profile, the band shows that head or tail component kilometre by kilometre: red above the line is wind against you, blue below it is wind behind you, and the height is its strength. The value of the two ends of the scale is written at the left, "15 km/h" at the top (headwind) and at the bottom (tailwind): the full height stands for 15 km/h, or for the strongest value on the route rounded up to the next 5 when that is more, so on a calm day the band stays thin. There is no grey in it: the grey stretches of the strip are where the band stays within 5 km/h of the line.
 
 ### Adding your own bundled route
 

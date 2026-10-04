@@ -768,6 +768,11 @@
   }
 }
 
+/* an svg gets the browser's own focus ring on a mouse click as well; the ring below is for the keyboard */
+.route-chart:focus {
+  outline: none;
+}
+
 .route-chart:focus-visible,
 .timebar-bars:focus-visible {
   outline: 1.5px solid var(--ink-3);
