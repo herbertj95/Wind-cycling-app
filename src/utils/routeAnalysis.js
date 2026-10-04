@@ -1,5 +1,4 @@
 // What the wind does along a route: head/tail/cross at every point, the totals and a plain-language advisory.
-import { sampleForecast } from './weatherApi';
 import { windComponents, classifyWindEffect, CALM_KMH } from './wind';
 
 // Average riding speeds offered when planning, in km/h
@@ -67,16 +66,18 @@ function buildAdvisory(a, totalKm) {
 }
 
 /**
- * Analyses a route for a ride that starts at forecast hour `startHour` and averages `rideKmh`.
+ * Analyses a route for a ride that starts at `startHour` and averages `rideKmh`.
+ * - forecast.sample(lat, lng, hour): the wind at a position and a moment, in hours on the same clock as
+ *   `startHour`, or null where no forecast is loaded. Past the end of the forecast it answers with the
+ *   last hour and `late: true`.
  * Each point is sampled at the time the rider gets there, not all at the start time.
  * `share` splits the distance by what the rider feels along the road (see classifyWindEffect):
  * `cross` holds everything that is neither a noticeable head nor tailwind.
- * Stretches outside the forecast grid are counted in `outsideKm` and in nothing else.
+ * Stretches without a forecast are counted in `outsideKm` and in nothing else.
  */
 export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
   const pts = route.points;
   const totalKm = route.totalDistance || 1;
-  const lastHour = forecast.hours.length - 1;
 
   const share = { tail: 0, cross: 0, head: 0 };
   let headSum = 0;
@@ -86,15 +87,17 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
   let strongHeadKm = 0;
   let gustyKm = 0;
   let outsideKm = 0;
+  let beyondForecast = false;
 
   const wind = pts.map((pt, i) => {
     const segKm = i > 0 ? pt.distance - pts[i - 1].distance : 0;
-    const w = sampleForecast(forecast, startHour + pt.distance / rideKmh, pt.lat, pt.lng);
-    if (w.outside) {
-      // beyond the forecast grid there is no wind to report: the stretch is left out of every total
+    const w = forecast.sample(pt.lat, pt.lng, startHour + pt.distance / rideKmh);
+    if (!w) {
+      // without a forecast there is no wind to report: the stretch is left out of every total
       outsideKm += segKm;
-      return { speed: 0, gust: 0, from: 0, temp: w.temp, feels: w.feels, head: 0, cross: 0, effect: 'unknown', outside: true };
+      return { speed: 0, gust: 0, from: 0, temp: NaN, feels: NaN, head: 0, cross: 0, effect: 'unknown', outside: true };
     }
+    if (w.late) beyondForecast = true;
     const { head, cross } = windComponents(pt.bearing, w.from, w.speed);
     const effect = classifyWindEffect(pt.bearing, w.from, w.speed);
 
@@ -111,7 +114,7 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
     maxCrossGust = Math.max(maxCrossGust, crossGust);
     if (w.gust >= STRONG_GUST_KMH || crossGust >= STRONG_CROSS_GUST_KMH) gustyKm += segKm;
 
-    return { speed: w.speed, gust: w.gust, from: w.from, temp: w.temp, feels: w.feels, head, cross, effect, outside: w.outside };
+    return { speed: w.speed, gust: w.gust, from: w.from, temp: w.temp, feels: w.feels, head, cross, effect, outside: false };
   });
 
   const durationHours = totalKm / rideKmh;
@@ -128,7 +131,7 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
     strongHeadKm,
     outsideKm,
     durationHours,
-    beyondForecast: startHour + durationHours > lastHour,
+    beyondForecast,
   };
   result.advisory = buildAdvisory(result, totalKm);
   return result;

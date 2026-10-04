@@ -155,11 +155,19 @@
   padding: 14px 16px 12px;
 }
 
+/* The place and the time share a line when they fit. When they do not (a long name, or a time that
+   carries its zone), the time goes below the name instead of squeezing it into a column. */
 .readout-top {
+  position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 2px 10px;
+}
+
+.readout-top.can-save {
+  padding-right: 30px;
 }
 
 .readout h1 {
@@ -175,6 +183,42 @@
   font-size: 13px;
   color: var(--ink-2);
   white-space: nowrap;
+}
+
+/* the button keeps the top right corner, whatever the name and the time do */
+.readout-save {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  border-color: transparent;
+}
+
+.readout-save[aria-pressed='true'] {
+  color: var(--ink);
+}
+
+.readout-name {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.readout-name input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: var(--track);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.readout-name input::placeholder,
+.search-field input::placeholder {
+  color: var(--ink-3);
 }
 
 .readout-main {
@@ -353,7 +397,8 @@
   color: var(--inv-ink);
 }
 
-.routes-menu {
+/* the two toolbar menus: places (search and saved places) and routes */
+.menu-panel {
   position: absolute;
   top: 52px;
   right: 0;
@@ -363,7 +408,7 @@
   padding: 6px;
 }
 
-.routes-menu button {
+.menu-panel button {
   display: block;
   width: 100%;
   padding: 9px 10px;
@@ -373,18 +418,19 @@
   text-align: left;
 }
 
-.routes-menu button:hover,
-.routes-menu button[aria-current='true'] {
+.menu-panel button:hover,
+.menu-panel button[aria-current='true'] {
   background: var(--track);
 }
 
-.routes-menu b {
+.menu-panel b {
   display: block;
   font-size: 14px;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
-.routes-menu small {
+.menu-panel small {
   display: block;
   margin-top: 1px;
   font-size: 12px;
@@ -392,7 +438,7 @@
   color: var(--ink-3);
 }
 
-.routes-menu .upload-button {
+.menu-panel .upload-button {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -400,9 +446,63 @@
   border: 1px dashed var(--hair);
 }
 
-.routes-menu .upload-button svg {
+.menu-panel .upload-button svg {
   flex: none;
   margin-top: 2px;
+}
+
+.menu-heading {
+  padding: 8px 10px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.menu-note {
+  padding: 6px 10px 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  margin-bottom: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: 7px;
+  background: var(--track);
+}
+
+.search-field:focus-within {
+  border-color: var(--ink-3);
+}
+
+.search-field svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.search-field input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  outline: none;
+}
+
+/* the browser's own clear button follows the ink colour of neither theme */
+.search-field input::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  opacity: 0.6;
 }
 
 .menu-error {
@@ -430,6 +530,42 @@
   font-size: 14px;
   line-height: 1.4;
   text-align: center;
+}
+
+.notice .text-button {
+  margin-left: 4px;
+}
+
+/* what is going on with the wind for the part of the map on screen; next to the map credits */
+.map-status {
+  position: absolute;
+  z-index: 4;
+  left: calc(46px + env(safe-area-inset-left));
+  bottom: calc(var(--dock-h, 110px) + 21px + env(safe-area-inset-bottom));
+  max-width: min(340px, calc(100vw - 70px));
+  padding: 5px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+/* a view that loads at once says nothing: the note only shows when loading takes a while */
+.map-status.loading {
+  animation: status-in 0.01s 0.7s both;
+}
+
+@keyframes status-in {
+  from {
+    visibility: hidden;
+  }
+
+  to {
+    visibility: visible;
+  }
+}
+
+.map-status .text-button {
+  color: var(--ink);
 }
 
 /* ---------- dock: route and time ---------- */
@@ -685,6 +821,28 @@
   opacity: 0.45;
 }
 
+/* an hour whose wind is not loaded keeps its place as a faint mark */
+.bar.empty::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--track);
+}
+
+.bar.empty.selected::after {
+  bottom: -7px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
 .bar.selected .speed {
   background: var(--ink);
   opacity: 1;
@@ -746,9 +904,26 @@
 }
 
 .spot-chip em {
+  max-width: 132px;
+  overflow: hidden;
   font-size: 12px;
   font-style: normal;
   color: var(--ink-2);
+  text-overflow: ellipsis;
+}
+
+/* the wind arrow; an empty one (still air, or nothing loaded) takes no room */
+.spot-chip span {
+  display: inline-flex;
+}
+
+.spot-chip span:empty {
+  display: none;
+}
+
+/* no room for this label at this zoom: see arrangeSpots in windMap.js */
+.spot-chip.crowded {
+  visibility: hidden;
 }
 
 .spot-chip b {
@@ -851,6 +1026,13 @@
   color: var(--ink-2);
 }
 
+/* five labelled buttons and the readout do not fit side by side below this width */
+@media (max-width: 1040px) {
+  .tool-button span {
+    display: none;
+  }
+}
+
 /* ---------- phone ---------- */
 
 @media (max-width: 720px) {
@@ -908,7 +1090,7 @@
     color: var(--ink);
   }
 
-  /* a row of four buttons just above the dock, so it never climbs over the readout */
+  /* a row of buttons just above the dock, so it never climbs over the readout */
   .toolbar {
     top: auto;
     bottom: calc(var(--dock-h, 110px) + 20px + env(safe-area-inset-bottom));
@@ -919,12 +1101,8 @@
     position: static;
   }
 
-  .tool-button span {
-    display: none;
-  }
-
   /* the route list is a sheet over the bottom of the screen */
-  .routes-menu {
+  .menu-panel {
     position: fixed;
     z-index: 9;
     top: auto;
@@ -933,6 +1111,24 @@
     left: calc(var(--gap) + env(safe-area-inset-left));
     width: auto;
     max-height: 70dvh;
+  }
+
+  /* the search opens at the top instead, where the on-screen keyboard does not cover it */
+  .places-menu {
+    top: calc(var(--gap) + env(safe-area-inset-top));
+    bottom: auto;
+    max-height: min(60dvh, 420px);
+  }
+
+  .readout-name {
+    margin-top: 8px;
+  }
+
+  /* above the row of tool buttons */
+  .map-status {
+    left: calc(var(--gap) + env(safe-area-inset-left));
+    bottom: calc(var(--dock-h, 110px) + 74px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 2 * var(--gap));
   }
 
   .timebar-place {
@@ -1089,9 +1285,22 @@
   }
 
   .timebar-label .text-button,
-  .readout .text-button {
+  .readout .text-button,
+  .notice .text-button,
+  .map-status .text-button {
     padding: 14px 0;
-    margin: -14px 0;
+    margin-top: -14px;
+    margin-bottom: -14px;
+  }
+
+  .readout-save {
+    top: -12px;
+    right: -11px;
+  }
+
+  .readout-name input,
+  .readout-name .pill-button {
+    height: 44px;
   }
 
   .maplibregl-ctrl-group button {

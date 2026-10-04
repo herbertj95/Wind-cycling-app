@@ -1,9 +1,10 @@
-// The map itself: a MapLibre basemap with the wind drawn on two canvases above it, plus the spots,
+// The map itself: a MapLibre basemap with the wind drawn on two canvases above it, plus the saved places,
 // the route and the rider. Everything here is imperative; React talks to it through the returned methods.
 import { Map as MapLibreMap, Marker, NavigationControl, AttributionControl, setWorkerUrl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { COVERAGE, SPOTS, sampleField } from '../utils/weatherApi';
+import { HOME_BOUNDS } from '../utils/places';
+import { wrapLng } from '../utils/lattice';
 import { calculateDistance } from '../utils/gpxParser';
 import { CALM_KMH, compassPoint } from '../utils/wind';
 import { MAP_THEMES, fallbackStyle, tintBaseStyle, loadBaseStyle } from '../utils/mapStyle';
@@ -12,30 +13,28 @@ import { drawGlyphs } from './glyphLayer';
 
 setWorkerUrl(workerUrl);
 
-const COVERAGE_OUTLINE = [
-  [COVERAGE.west, COVERAGE.south],
-  [COVERAGE.east, COVERAGE.south],
-  [COVERAGE.east, COVERAGE.north],
-  [COVERAGE.west, COVERAGE.north],
-  [COVERAGE.west, COVERAGE.south],
-];
+// Further out than this the wind would be read from forecast points too far apart to mean anything
+const MIN_ZOOM = 5;
+// A place far off screen is flown to in this long, however far it is: it shows that the map has gone
+// somewhere else without crawling across the world.
+const FLIGHT_MS = 1800;
 const ROUTE_LAYERS = ['route-km', 'route-chevrons', 'route-line', 'route-casing'];
 const ROUTE_SOURCES = ['route', 'route-parts', 'route-km'];
 const ZOOM = ['interpolate', ['linear'], ['zoom']];
 
-// The home view shows every spot, with a little air around them.
-const HOME_BOUNDS = (() => {
-  const lats = SPOTS.map((s) => s.lat);
-  const lngs = SPOTS.map((s) => s.lng);
-  return [
-    [Math.min(...lngs) - 0.05, Math.min(...lats) - 0.03],
-    [Math.max(...lngs) + 0.05, Math.max(...lats) + 0.03],
-  ];
-})();
-
 // Small arrow pointing down, rotated by the direction the wind comes from: it then points downwind.
 const arrowSvg = (deg) =>
   `<svg viewBox="0 0 12 12" aria-hidden="true" style="transform:rotate(${Math.round(deg)}deg)"><path d="M6 1v9.5M6 10.5L2.5 6.5M6 10.5l3.5-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+// A track that crosses the date line jumps from 180 to -180. Its longitudes are carried on past 180
+// instead, so the line is drawn the short way round rather than back across the whole map.
+function continuous(parts) {
+  let previous = null;
+  return parts.map((part) => part.map(([lng, lat]) => {
+    previous = previous === null ? lng : previous + wrapLng(lng - previous);
+    return [previous, lat];
+  }));
+}
 
 // one chevron per colour, drawn once
 const chevrons = new Map();
@@ -62,18 +61,23 @@ function chevronImage(color) {
 
 /**
  * Creates the wind map inside `container`.
- * - onPick(lat, lng): the user tapped the map (anywhere, also outside the forecast area)
+ * - view: { lat, lng, zoom } to open on; without it the map opens on the home area
+ * - onPick(lat, lng): the user tapped the map
+ * - onSpot(id): the user tapped a place label
  * - onUserMove(): the user panned or zoomed the map by hand
- * - onSpot(id): the user tapped a spot label
+ * - onMoveStart(): the map started moving, by hand or not
+ * - onViewChange({ bounds, center, zoom }): the map came to rest; bounds are { south, north, west, east }
  * - getPadding(): { top, right, bottom, left } px covered by floating panels, so fits avoid them
+ * - getCovered(): the screen rectangles of those panels, so no wind arrow is drawn half under one
  */
-export function createWindMap(container, { theme: initialTheme, flowEnabled, onPick, onSpot, onUserMove, getPadding }) {
+export function createWindMap(container, { theme: initialTheme, flowEnabled, view, onPick, onSpot, onUserMove, onMoveStart, onViewChange, getPadding, getCovered }) {
   let themeName = initialTheme;
-  let field = null;
+  let frame = null;
   let baseStyle = null;
   let styleReady = false;
   let destroyed = false;
   let route = null;
+  let routeLine = [];
   let routeStops = null;
   let width = 0;
   let height = 0;
@@ -88,9 +92,9 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   const map = new MapLibreMap({
     container,
     style: fallbackStyle(themeName),
-    center: [-9.19, 38.7],
-    zoom: 9.6,
-    minZoom: 8,
+    center: view ? [view.lng, view.lat] : [-9.19, 38.7],
+    zoom: view ? view.zoom : 9.6,
+    minZoom: MIN_ZOOM,
     maxZoom: 16,
     dragRotate: false,
     pitchWithRotate: false,
@@ -102,7 +106,13 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   map.keyboard.disableRotation();
   map.addControl(new NavigationControl({ showCompass: false }), 'bottom-right');
   map.addControl(
-    new AttributionControl({ compact: true, customAttribution: '<a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a>' }),
+    new AttributionControl({
+      compact: true,
+      customAttribution: [
+        '<a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a>',
+        '<a href="https://www.geonames.org/" target="_blank" rel="noopener">Place search by GeoNames</a>',
+      ],
+    }),
     'bottom-left',
   );
   // the credits start folded, so they do not lie across the map on a phone
@@ -124,8 +134,10 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   flow.setEnabled(flowEnabled);
 
   const colors = () => MAP_THEMES[themeName];
-  const sample = (lat, lng) => sampleField(field, lat, lng);
+  const sample = (lat, lng) => frame.sample(lat, lng);
   const project = (lat, lng) => map.project([lng, lat]);
+  // where a place label is on screen: on the copy of the world the map is showing it on
+  const labelPoint = (entry) => map.project(entry.marker.getLngLat());
 
   function padding() {
     const p = { top: 0, right: 0, bottom: 0, left: 0, ...getPadding() };
@@ -146,32 +158,55 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   }
 
   function redrawGlyphs() {
-    if (!field || !width) return;
-    const view = map.getBounds();
+    if (!frame || !width) return;
+    const shown = map.getBounds();
     drawGlyphs(glyphCtx, {
       width,
       height,
       zoom: map.getZoom(),
-      bounds: { south: view.getSouth(), north: view.getNorth(), west: view.getWest(), east: view.getEast() },
+      bounds: { south: shown.getSouth(), north: shown.getNorth(), west: shown.getWest(), east: shown.getEast() },
       project,
       sample,
       ink: colors().flow,
       halo: colors().halo,
-      avoid: [...spotMarkers.values()].map(({ spot }) => {
-        const p = project(spot.lat, spot.lng);
+      avoid: [...spotMarkers.values()].filter((entry) => !entry.crowded).map((entry) => {
+        const p = labelPoint(entry);
         return [p.x, p.y];
       }),
+      covered: getCovered(),
     });
   }
 
   function refreshFlow() {
-    if (!field || !width) return;
-    const topLeft = map.project([COVERAGE.west, COVERAGE.north]);
-    const bottomRight = map.project([COVERAGE.east, COVERAGE.south]);
-    flow.update({
-      unproject: (x, y) => map.unproject([x, y]),
-      sample,
-      bounds: [topLeft.x, topLeft.y, bottomRight.x, bottomRight.y],
+    if (!frame || !width) return;
+    flow.update({ unproject: (x, y) => map.unproject([x, y]), sample });
+  }
+
+  // Labels of places that are close together pile up when the map is zoomed out. The selected place and
+  // then the first ones in the list keep their label; the others wait until there is room.
+  function arrangeSpots() {
+    const placed = [];
+    const entries = [...spotMarkers.values()].sort((a, b) => Number(!!b.spot.selected) - Number(!!a.spot.selected));
+    for (const entry of entries) {
+      const { spot, el } = entry;
+      const p = labelPoint(entry);
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      const left = spot.anchor === 'left' ? p.x : spot.anchor === 'right' ? p.x - w : p.x - w / 2;
+      const box = [left, p.y - h / 2, left + w, p.y + h / 2];
+      entry.crowded = placed.some((o) => box[0] < o[2] && box[2] > o[0] && box[1] < o[3] && box[3] > o[1]);
+      el.classList.toggle('crowded', entry.crowded);
+      if (!entry.crowded) placed.push(box);
+    }
+  }
+
+  function reportView() {
+    const bounds = map.getBounds();
+    const center = map.getCenter();
+    onViewChange({
+      bounds: { south: bounds.getSouth(), north: bounds.getNorth(), west: bounds.getWest(), east: bounds.getEast() },
+      center: { lat: center.lat, lng: wrapLng(center.lng) },
+      zoom: map.getZoom(),
     });
   }
 
@@ -199,10 +234,6 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
 
   function installOverlays() {
     const t = colors();
-    if (!map.getSource('coverage')) {
-      map.addSource('coverage', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: COVERAGE_OUTLINE } } });
-      map.addLayer({ id: 'coverage', type: 'line', source: 'coverage', paint: { 'line-color': t.label, 'line-opacity': 0.35, 'line-width': 1, 'line-dasharray': [3, 3] } });
-    }
     if (map.hasImage('chevron')) map.removeImage('chevron');
     map.addImage('chevron', chevronImage(t.casing), { pixelRatio: 2 });
 
@@ -212,12 +243,12 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
     map.addSource('route', {
       type: 'geojson',
       lineMetrics: true,
-      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route.parts.flat() } },
+      data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: routeLine.flat() } },
     });
     // The stretches that were ridden, split where the recording jumps (a ferry): direction chevrons only go on these.
     map.addSource('route-parts', {
       type: 'geojson',
-      data: { type: 'Feature', properties: {}, geometry: { type: 'MultiLineString', coordinates: route.parts.filter((part) => part.length > 1) } },
+      data: { type: 'Feature', properties: {}, geometry: { type: 'MultiLineString', coordinates: routeLine.filter((part) => part.length > 1) } },
     });
 
     const stops = routeStops || plainStops();
@@ -285,7 +316,6 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
       if (!map.getLayer(layer.id)) return;
       Object.entries(layer.paint || {}).forEach(([key, value]) => map.setPaintProperty(layer.id, key, value));
     });
-    map.setPaintProperty('coverage', 'line-color', t.label);
     map.updateImage('chevron', chevronImage(t.casing));
     if (map.getLayer('route-km')) {
       map.setPaintProperty('route-km', 'text-color', t.label);
@@ -312,8 +342,17 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   };
   window.addEventListener('online', onOnline);
 
-  function fitCoverage(animate = true) {
-    map.fitBounds(HOME_BOUNDS, { padding: padding(), animate });
+  // whether a position is so far off screen that going there is a flight rather than a glide
+  function isFar(lat, lng) {
+    // measured the short way round the globe, as the map will go
+    const centre = map.getCenter().lng;
+    const p = map.project([centre + wrapLng(lng - centre), lat]);
+    return Math.hypot(p.x - width / 2, p.y - height / 2) > 3 * Math.max(width, height);
+  }
+
+  // The view the app opens with the first time: the default places, clear of the panels.
+  function fitHome() {
+    map.fitBounds([[HOME_BOUNDS.west, HOME_BOUNDS.south], [HOME_BOUNDS.east, HOME_BOUNDS.north]], { padding: padding(), animate: false });
   }
 
   map.on('style.load', () => {
@@ -322,28 +361,33 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
   });
   map.on('resize', sizeCanvases);
   map.on('movestart', (e) => {
+    onMoveStart();
     // movements started by a finger or the mouse carry the original event; the app's own fits do not
     if (e.originalEvent) onUserMove();
     flow.setMoving(true);
   });
   map.on('move', redrawGlyphs);
   map.on('moveend', () => {
+    arrangeSpots();
     refreshFlow();
     flow.reseed();
     flow.setMoving(false);
     redrawGlyphs();
+    reportView();
   });
   // A tap is reported a moment later, so the first tap of a double-tap zoom does not pin a point.
   const cancelPick = () => clearTimeout(pickTimer);
   map.on('click', (e) => {
-    const { lat, lng } = e.lngLat;
+    // a tap on a repeated copy of the world is a tap on the same place
+    const { lat, lng } = e.lngLat.wrap();
     cancelPick();
     pickTimer = setTimeout(() => onPick(lat, lng), 280);
   });
   map.on('dblclick', cancelPick);
   map.on('zoomstart', cancelPick);
   sizeCanvases();
-  fitCoverage(false);
+  if (!view) fitHome();
+  reportView();
   // canvas text needs the web font to be ready, otherwise the first numbers use the fallback face
   document.fonts?.load('600 12px Barlow').then(() => !destroyed && redrawGlyphs());
 
@@ -361,13 +405,10 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
       redrawGlyphs();
     },
 
-    /** One hour of forecast (see buildField). */
-    setField(nextField) {
-      const isFirst = !field;
-      field = nextField;
+    /** The wind at one moment: { sample(lat, lng) } giving { u, v, speed } or null where none is loaded (see windStore.frame). */
+    setFrame(nextFrame) {
+      frame = nextFrame;
       refreshFlow();
-      // particles are seeded inside the forecast area, which is only known once there is a field
-      if (isFirst) flow.reseed();
       redrawGlyphs();
     },
 
@@ -389,15 +430,21 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
             e.stopPropagation();
             onSpot(spot.id);
           });
+          // the name is whatever the rider typed or the place search sent, so it only ever goes in as text
+          const name = el.appendChild(document.createElement('em'));
+          const speed = el.appendChild(document.createElement('b'));
+          const arrow = el.appendChild(document.createElement('span'));
           const marker = new Marker({ element: el, anchor: spot.anchor || 'center' }).setLngLat([spot.lng, spot.lat]).addTo(map);
-          entry = { el, marker, spot };
+          entry = { el, name, speed, arrow, marker, spot, crowded: false };
           spotMarkers.set(spot.id, entry);
         }
         entry.spot = spot;
         const hasWind = Number.isFinite(spot.speed);
         // still air has no direction, so it gets no arrow
         const hasDirection = hasWind && spot.speed >= CALM_KMH;
-        entry.el.innerHTML = `<em>${spot.label}</em><b>${hasWind ? Math.round(spot.speed) : '–'}</b>${hasDirection ? arrowSvg(spot.from) : ''}`;
+        entry.name.textContent = spot.label;
+        entry.speed.textContent = hasWind ? Math.round(spot.speed) : '–';
+        entry.arrow.innerHTML = hasDirection ? arrowSvg(spot.from) : '';
         entry.el.setAttribute(
           'aria-label',
           !hasWind ? spot.label : `${spot.label}: ${Math.round(spot.speed)} km/h${hasDirection ? ` from the ${compassPoint(spot.from)}` : ', calm'}`,
@@ -408,6 +455,7 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
         spotMarkers.get(id).marker.remove();
         spotMarkers.delete(id);
       });
+      arrangeSpots();
       redrawGlyphs();
     },
 
@@ -415,6 +463,7 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
     setRoute(nextRoute) {
       removeRoute();
       route = nextRoute;
+      routeLine = route ? continuous(route.parts) : [];
       routeStops = null;
       if (!route) return;
       if (styleReady) installOverlays();
@@ -437,20 +486,24 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
 
       let south = 90;
       let north = -90;
-      let west = 180;
-      let east = -180;
-      route.points.forEach((p) => {
-        south = Math.min(south, p.lat);
-        north = Math.max(north, p.lat);
-        west = Math.min(west, p.lng);
-        east = Math.max(east, p.lng);
-      });
+      let west = Infinity;
+      let east = -Infinity;
+      routeLine.forEach((part) => part.forEach(([lng, lat]) => {
+        south = Math.min(south, lat);
+        north = Math.max(north, lat);
+        west = Math.min(west, lng);
+        east = Math.max(east, lng);
+      }));
       // wait a frame so the route panel has its final height before measuring the padding
       requestAnimationFrame(() => {
         if (destroyed) return;
         const p = padding();
-        // extra room at the top and sides for the start and finish labels
-        map.fitBounds([[west, south], [east, north]], { padding: { top: p.top + 58, right: p.right + 40, bottom: p.bottom + 12, left: p.left + 40 } });
+        map.fitBounds([[west, south], [east, north]], {
+          // extra room at the top and sides for the start and finish labels
+          padding: { top: p.top + 58, right: p.right + 40, bottom: p.bottom + 12, left: p.left + 40 },
+          // a route somewhere else in the world is not approached at the pace of one next door
+          ...(isFar((south + north) / 2, (west + east) / 2) ? { duration: FLIGHT_MS } : {}),
+        });
       });
     },
 
@@ -512,15 +565,14 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, onP
     /** Brings a point into the part of the map the panels leave free. */
     focusOn(lat, lng, minZoom = 11) {
       const p = padding();
-      map.easeTo({
+      const target = {
         center: [lng, lat],
         zoom: Math.max(map.getZoom(), minZoom),
         offset: [(p.left - p.right) / 2, (p.top - p.bottom) / 2],
-        duration: 700,
-      });
+      };
+      if (isFar(lat, lng)) map.flyTo({ ...target, duration: FLIGHT_MS });
+      else map.easeTo({ ...target, duration: 700 });
     },
-
-    fitCoverage,
 
     destroy() {
       destroyed = true;

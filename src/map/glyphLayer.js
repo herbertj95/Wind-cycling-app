@@ -1,6 +1,5 @@
 // Wind as a reading: arrows that point the way the wind blows, longer when it is stronger,
 // each with its speed in km/h. This is what stays on screen when the animation is off.
-import { GRID, COVERAGE } from '../utils/weatherApi';
 import { CALM_KMH } from '../utils/wind';
 
 const FONT = '600 12px Barlow, system-ui, sans-serif';
@@ -14,26 +13,39 @@ const FULL_LENGTH_KMH = 50;
 // of the arrow, so it is checked on its own as well as the arrow's centre.
 const EDGE_MARGIN = 26;
 const LABEL_MARGIN = 10;
+// and an arrow this close to a floating panel would run under it
+const PANEL_MARGIN = 24;
+
+// The lattice is laid out in Web Mercator, where 1 is the width of the world, so its cells are square on
+// screen at any latitude. At zoom 9 there is an arrow every 0.125° of longitude, about 91 px.
+const CELL_AT_ZOOM_9 = 0.125 / 360;
+const MAX_LAT = 85;
+
+const mercatorY = (lat) => 0.5 - Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) / (2 * Math.PI);
+const latitudeAt = (y) => (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) / Math.PI;
 
 /**
  * Draws the arrow lattice. The lattice is anchored to the ground (not the screen) so arrows stay put while panning,
  * and it gets denser by whole zoom levels so spacing stays between roughly 90 and 180 px.
- * - bounds: { south, north, west, east } of the visible map, so only the arrows in view are worked out
- * - avoid: screen points [x, y] (spot labels) that arrows should not be drawn over
+ * - bounds: { south, north, west, east } of the visible map, so only the arrows in view are worked out;
+ *   west and east may run past ±180 when the view crosses the date line
+ * - sample(lat, lng): the wind there, or null where none is loaded (no arrow is drawn)
+ * - avoid: screen points [x, y] (place labels) that arrows should not be drawn over
+ * - covered: screen rectangles { left, top, right, bottom } (the floating panels) under which no arrow is
+ *   drawn, so none is left half hidden by a panel's edge
  */
-export function drawGlyphs(ctx, { width, height, zoom, bounds, project, sample, ink, halo, avoid = [] }) {
+export function drawGlyphs(ctx, { width, height, zoom, bounds, project, sample, ink, halo, avoid = [], covered = [] }) {
   ctx.clearRect(0, 0, width, height);
 
-  const level = Math.min(16, Math.max(9, Math.floor(zoom + 0.15)));
-  const stepLng = GRID.step / 2 ** (level - 9);
-  const stepLat = stepLng * 0.78; // roughly square cells at this latitude
+  const level = Math.floor(zoom + 0.15);
+  const cell = CELL_AT_ZOOM_9 / 2 ** (level - 9);
   const color = `rgb(${ink.join(',')})`;
 
-  const south = Math.max(COVERAGE.south, bounds.south);
-  const north = Math.min(COVERAGE.north, bounds.north);
-  const west = Math.max(COVERAGE.west, bounds.west);
-  const east = Math.min(COVERAGE.east, bounds.east);
-  if (south >= north || west >= east) return;
+  const top = mercatorY(Math.min(MAX_LAT, bounds.north));
+  const bottom = mercatorY(Math.max(-MAX_LAT, bounds.south));
+  const left = (bounds.west + 180) / 360;
+  const right = (bounds.east + 180) / 360;
+  if (top >= bottom || left >= right) return;
 
   ctx.font = FONT;
   ctx.textAlign = 'center';
@@ -41,22 +53,23 @@ export function drawGlyphs(ctx, { width, height, zoom, bounds, project, sample, 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  const firstRow = Math.max(0, Math.floor((south - COVERAGE.south) / stepLat - 0.5));
-  for (let row = firstRow; ; row++) {
-    const lat = COVERAGE.south + (row + 0.5) * stepLat;
-    if (lat >= north) break;
+  for (let row = Math.floor(top / cell - 0.5); ; row++) {
+    const y = (row + 0.5) * cell;
+    if (y >= bottom) break;
+    const lat = latitudeAt(y);
     // every other row is shifted half a step, which reads as a field rather than a table
     const shift = row % 2 ? 0.75 : 0.25;
-    const firstCol = Math.max(0, Math.floor((west - COVERAGE.west) / stepLng - shift));
-    for (let col = firstCol; ; col++) {
-      const lng = COVERAGE.west + (col + shift) * stepLng;
-      if (lng >= east) break;
+    for (let col = Math.floor(left / cell - shift); ; col++) {
+      const lng = (col + shift) * cell * 360 - 180;
+      if (lng >= bounds.east) break;
 
       const p = project(lat, lng);
       if (p.x < EDGE_MARGIN || p.y < EDGE_MARGIN || p.x > width - EDGE_MARGIN || p.y > height - EDGE_MARGIN) continue;
-      if (avoid.some(([x, y]) => Math.abs(x - p.x) < 62 && Math.abs(y - p.y) < 24)) continue;
+      if (avoid.some(([x, y2]) => Math.abs(x - p.x) < 62 && Math.abs(y2 - p.y) < 24)) continue;
+      if (covered.some((r) => p.x > r.left - PANEL_MARGIN && p.x < r.right + PANEL_MARGIN && p.y > r.top - PANEL_MARGIN && p.y < r.bottom + PANEL_MARGIN)) continue;
 
       const w = sample(lat, lng);
+      if (!w) continue;
       const magnitude = Math.hypot(w.u, w.v);
       if (magnitude < CALM_KMH) {
         ctx.fillStyle = color;

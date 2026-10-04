@@ -97,7 +97,8 @@ export function fallbackStyle(themeName) {
   };
 }
 
-const HIDDEN_LAYERS = /shield|oneway|highway.name|airport|ice|glacier|country|state/;
+// Country and region names stay: zoomed out, they are what tells one part of the world from another.
+const HIDDEN_LAYERS = /shield|oneway|highway.name|airport|ice|glacier/;
 const keepProps = (paint, ...keys) => {
   const out = {};
   keys.forEach((k) => {
@@ -108,7 +109,7 @@ const keepProps = (paint, ...keys) => {
 
 /**
  * Recolours the base style for a theme, drops what a cyclist does not need (shields, road names,
- * borders) and adds hillshade plus dotted cycleways.
+ * airports) and adds hillshade plus dotted cycleways.
  */
 export function tintBaseStyle(baseStyle, themeName) {
   const t = MAP_THEMES[themeName];

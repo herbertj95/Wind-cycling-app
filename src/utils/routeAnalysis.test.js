@@ -1,33 +1,47 @@
 import { describe, it, expect } from 'vitest';
 import { analyseRoute, RIDE_SPEEDS } from './routeAnalysis';
-import { GRID, GRID_POINTS } from './weatherApi';
+import { nodeKey } from './lattice';
+import { pointAt, blendAt } from './windField';
 import { angleDiff, windComponents } from './wind';
 
 // Convention under test: a wind direction is where the wind comes FROM (0 = north, 90 = east), speeds in km/h.
 
 const T0 = 1790985600; // 2026-10-03 00:00 UTC in unix seconds
+const HOUR = 3600;
 const KM_PER_DEGREE = 111.19492664455873; // 6371 km * pi / 180
 
+// The forecast these tests load: a 6 x 6 block of the finest lattice over greater Lisbon, 0.125° apart,
+// from 38.375 to 39 north and from -9.5 to -8.875 east. Beyond it there is no forecast.
+const GRID = { south: 38.375, west: -9.5, step: 0.125, rows: 6, cols: 6 };
+const GRID_POINTS = [];
+for (let r = 0; r < GRID.rows; r++) {
+  for (let c = 0; c < GRID.cols; c++) {
+    GRID_POINTS.push({ lat: GRID.south + r * GRID.step, lng: GRID.west + c * GRID.step });
+  }
+}
+
 /**
- * Synthetic forecast. `at(k, h, point)` describes grid point k at hour h and returns
- * { speed, dir, gust?, temp?, feels? }.
+ * Synthetic forecast. `at(k, h, point)` describes grid point k (row-major, south to north) at hour h and
+ * returns { speed, dir, gust?, temp?, feels? }.
+ * The result is what analyseRoute reads from: sample(lat, lng, hour), with hours counted from the first
+ * forecast hour, as the start hours in the tests below are.
  */
 function makeForecast(hourCount, at) {
+  const points = new Map();
+  GRID_POINTS.forEach((point, k) => {
+    const p = { t0: T0, n: hourCount, speed: [], dir: [], gust: [], temp: [], feels: [], zone: 'Europe/Lisbon', fetchedAt: T0 * 1000 };
+    for (let h = 0; h < hourCount; h++) {
+      const w = at(k, h, point);
+      p.speed.push(w.speed);
+      p.dir.push(w.dir);
+      p.gust.push('gust' in w ? w.gust : w.speed);
+      p.temp.push('temp' in w ? w.temp : 18);
+      p.feels.push('feels' in w ? w.feels : 17);
+    }
+    points.set(nodeKey(0, Math.round(point.lat / GRID.step), Math.round(point.lng / GRID.step)), p);
+  });
   return {
-    hours: Array.from({ length: hourCount }, (_, h) => T0 + h * 3600),
-    points: GRID_POINTS.map((point, k) => {
-      const p = { speed: [], dir: [], gust: [], temp: [], feels: [] };
-      for (let h = 0; h < hourCount; h++) {
-        const w = at(k, h, point);
-        p.speed.push(w.speed);
-        p.dir.push(w.dir);
-        p.gust.push('gust' in w ? w.gust : w.speed);
-        p.temp.push('temp' in w ? w.temp : 18);
-        p.feels.push('feels' in w ? w.feels : 17);
-      }
-      return p;
-    }),
-    fetchedAt: T0 * 1000,
+    sample: (lat, lng, hour) => blendAt(lat, lng, [0], (key) => pointAt(points.get(key), T0 + hour * HOUR)),
   };
 }
 
@@ -615,9 +629,9 @@ describe('analyseRoute at the limits of the forecast', () => {
     expect(result.wind[50].head).toBeCloseTo(10, 5);
   });
 
-  it('counts the kilometres ridden outside the forecast area', () => {
-    // 12 points 0.01 degrees (1.112 km) apart, from 38.945 to 39.055 north. The grid ends at 39.0,
-    // so the six points from 39.005 on are outside: 6 of the 11 segments.
+  it('counts the kilometres ridden where there is no forecast', () => {
+    // 12 points 0.01 degrees (1.112 km) apart, from 38.945 to 39.055 north. The loaded points end at 39.0,
+    // so the six points from 39.005 on have no forecast around them: 6 of the 11 segments.
     const step = 0.01 * KM_PER_DEGREE;
     const route = makeRoute({ lat: 38.945, lng: -9.2 }, [{ bearing: 0, km: 11 * step, steps: 11 }]);
     const result = analyseRoute(route, northerly(), 0, 25);

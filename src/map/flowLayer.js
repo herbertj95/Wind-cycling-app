@@ -77,10 +77,13 @@ export function createFlowLayer(canvas) {
       const i = Math.floor(gx);
       const j = Math.floor(gy);
       const k = j * cols + i;
-      if (p.age++ > p.life || i < 0 || j < 0 || i >= cols - 1 || j >= rows - 1 || !gridInside[k] || !gridInside[k + cols + 1]) {
+      if (p.age++ > p.life || i < 0 || j < 0 || i >= cols - 1 || j >= rows - 1) {
         spawn(p);
         continue;
       }
+      // Where no wind is loaded a particle waits out its life unseen. Starting it again somewhere else
+      // straight away would pile every particle up in the part of the screen that does have wind.
+      if (!gridInside[k] || !gridInside[k + 1] || !gridInside[k + cols] || !gridInside[k + cols + 1]) continue;
       const tx = gx - i;
       const ty = gy - j;
       const w00 = (1 - tx) * (1 - ty);
@@ -119,6 +122,8 @@ export function createFlowLayer(canvas) {
     resize(w, h, dpr) {
       width = w;
       height = h;
+      // particles live anywhere on the canvas; where no wind is loaded they are simply not drawn
+      box = [0, 0, w, h];
       canvas.width = w * dpr;
       canvas.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -126,9 +131,9 @@ export function createFlowLayer(canvas) {
 
     /**
      * Rebuilds the screen-space wind grid for the current view.
-     * unproject(x, y) -> { lat, lng }; sample(lat, lng) -> { u, v, speed, outside }; bounds = [x0, y0, x1, y1] of the forecast area on screen.
+     * unproject(x, y) -> { lat, lng }; sample(lat, lng) -> { u, v, speed }, or null where no wind is loaded.
      */
-    update({ unproject, sample, bounds }) {
+    update({ unproject, sample }) {
       if (!width) return;
       cols = Math.ceil(width / CELL) + 2;
       rows = Math.ceil(height / CELL) + 2;
@@ -141,7 +146,7 @@ export function createFlowLayer(canvas) {
         for (let i = 0; i < cols; i++) {
           const { lat, lng } = unproject(i * CELL, j * CELL);
           const w = sample(lat, lng);
-          if (!w || w.outside) continue;
+          if (!w) continue;
           const k = j * cols + i;
           gridU[k] = w.u;
           gridV[k] = -w.v; // screen y grows southwards
@@ -149,7 +154,6 @@ export function createFlowLayer(canvas) {
           gridInside[k] = 1;
         }
       }
-      box = [Math.max(0, bounds[0]), Math.max(0, bounds[1]), Math.min(width, bounds[2]), Math.min(height, bounds[3])];
     },
 
     reseed,

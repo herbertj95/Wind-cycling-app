@@ -15,15 +15,23 @@ function describePoint(point, wind) {
   return `${place}: ${alongText}, ${acrossText}`;
 }
 
+const NO_WIND_TEXT = {
+  loading: 'Loading the wind along this route…',
+  failed: 'The wind along this route could not be loaded.',
+  ready: 'There is no wind forecast for this route at this time.',
+};
+
 /**
  * Everything about the loaded route: how much of it is with, across and against the wind,
  * a plain-language verdict, and the profile you can ride along.
- * - analysis: from analyseRoute, or null while there is no forecast (the route itself is still shown)
+ * - analysis: from analyseRoute
+ * - windState: how far the forecast along the route is, 'ready' | 'loading' | 'failed'
  * - colors: { tail, neutral, head } for the current theme
  */
 export default function RoutePanel({
   route,
   analysis,
+  windState,
   riderIdx,
   onScrub,
   onClear,
@@ -38,9 +46,8 @@ export default function RoutePanel({
 }) {
   const total = route.totalDistance || 1;
   const index = Math.min(riderIdx, route.points.length - 1);
-  // a route that mostly lies outside the forecast grid gets no wind verdict: there is no data to base one on
-  const outside = analysis ? analysis.outsideKm >= total * 0.5 : false;
-  const wind = analysis && !outside ? analysis.wind : null;
+  // a route with no forecast for most of its length gets no wind verdict: there is no data to base one on
+  const wind = analysis.outsideKm < total * 0.5 ? analysis.wind : null;
   const pointText = describePoint(route.points[index], wind?.[index]);
 
   return (
@@ -79,13 +86,7 @@ export default function RoutePanel({
         </div>
       </div>
 
-      {!analysis && (
-        <p className="route-plan">The wind along this route appears once the forecast has loaded.</p>
-      )}
-
-      {analysis && outside && (
-        <p className="route-plan">This route is outside the forecast area, so there is no wind analysis for it.</p>
-      )}
+      {!wind && <p className="route-plan">{NO_WIND_TEXT[windState]}</p>}
 
       {wind && (
         <>
@@ -98,7 +99,7 @@ export default function RoutePanel({
             </select>
             , about {formatDuration(analysis.durationHours)}.
             {analysis.beyondForecast && ' The ride ends after the forecast does.'}
-            {analysis.outsideKm > total * 0.05 && ' Part of it lies outside the forecast area.'}
+            {analysis.outsideKm > total * 0.05 && (windState === 'loading' ? ' Part of the wind is still loading.' : ' Part of it has no forecast.')}
           </p>
 
           <Shares analysis={analysis} total={total} colors={colors} />

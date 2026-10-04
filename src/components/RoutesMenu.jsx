@@ -3,7 +3,7 @@ import { UploadSimple, WarningCircle } from '@phosphor-icons/react';
 import { PRESET_ROUTES } from '../utils/gpxParser';
 
 /**
- * Route picker: the bundled Lisbon routes plus your own GPX file.
+ * Route picker: your own GPX file, from anywhere, plus the bundled routes around Lisbon.
  */
 export default function RoutesMenu({ id, activeId, error, onPreset, onFile }) {
   const fileInputRef = useRef(null);
@@ -15,7 +15,7 @@ export default function RoutesMenu({ id, activeId, error, onPreset, onFile }) {
   };
 
   return (
-    <div id={id} className="routes-menu panel">
+    <div id={id} className="menu-panel routes-menu panel">
       <button type="button" className="upload-button" onClick={() => fileInputRef.current.click()}>
         <UploadSimple size={18} aria-hidden="true" />
         <span>
@@ -32,6 +32,7 @@ export default function RoutesMenu({ id, activeId, error, onPreset, onFile }) {
         </p>
       )}
 
+      <h2 className="menu-heading">Around Lisbon</h2>
       <ul>
         {PRESET_ROUTES.map((preset) => (
           <li key={preset.id}>

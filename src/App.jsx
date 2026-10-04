@@ -1,25 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Crosshair, Moon, Path, Sun, Wind } from '@phosphor-icons/react';
+import { Crosshair, MagnifyingGlass, Moon, Path, Sun, Wind } from '@phosphor-icons/react';
 import WindMap from './components/WindMap';
 import WindReadout from './components/WindReadout';
 import TimeBar from './components/TimeBar';
 import RoutePanel from './components/RoutePanel';
 import RoutesMenu from './components/RoutesMenu';
-import { useForecast, useNow } from './hooks/useForecast';
-import { SPOTS, buildField, currentHourIndex, inCoverage, sampleField } from './utils/weatherApi';
+import PlacesMenu from './components/PlacesMenu';
+import { useWind, useNow } from './hooks/useWind';
+import { STALE_MS } from './utils/windStore';
+import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds } from './utils/lattice';
+import { loadPlaces, makePlace, savePlaces } from './utils/places';
 import { analyseRoute } from './utils/routeAnalysis';
 import { parseGpxData } from './utils/gpxParser';
 import { CALM_KMH } from './utils/wind';
 import { MAP_THEMES, effectColor, routeGradient } from './utils/mapStyle';
-import { formatClock, formatDayClock } from './utils/time';
+import { DEVICE_ZONE, formatClock, formatDayClock, hourStart, validZone, zoneLabel } from './utils/time';
 import './App.css';
 
+const HOUR = 3600;
 // Hours of forecast shown on the time bar, relative to now
 const HOURS_BACK = 2;
 const HOURS_AHEAD = 45;
 
-const DEFAULT_FOCUS = { type: 'spot', id: SPOTS[0].id };
 const THEME_KEY = 'wind-theme';
+const VIEW_KEY = 'wind-view-v1';
+const FOCUS_KEY = 'wind-focus-v1';
 const NARROW_SCREEN = 720;
 // ms between rider steps at 1x: a 600-point route plays in a little over a minute
 const RIDE_TICK_MS = 120;
@@ -27,7 +32,22 @@ const RIDE_TICK_MS = 120;
 const GEO_PRECISE = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
 const GEO_QUICK = { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 };
 const GEO_TIMEOUT = 3;
-const MENU_ID = 'routes-menu';
+const PLACES_MENU_ID = 'places-menu';
+const ROUTES_MENU_ID = 'routes-menu';
+
+// Forecast points asked for at once: across the map view, along a route, and around the saved places in view.
+// Each one counts against the free allowance of the forecast service, so the view takes a coarser lattice
+// when zoomed out instead of more points.
+const VIEW_MAX_POINTS = 120;
+const ROUTE_MAX_POINTS = 64;
+const PLACES_WITH_WIND = 12;
+// The wind for a view is asked for once the map has been still this long, so passing through downloads nothing
+const VIEW_SETTLE_MS = 350;
+// On start the map waits this long for a quick position fix before asking for the wind of the view it opened on
+const START_HOLD_MS = 1200;
+// A reading for one place only comes from forecast points at most 0.125° apart, never from the coarser ones
+// of a zoomed-out view
+const POINT = { maxLevel: 0 };
 
 function initialTheme() {
   try {
@@ -39,13 +59,49 @@ function initialTheme() {
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+// where the map was left, or null the first time (it then opens on the default places)
+function initialView() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIEW_KEY));
+    if (saved && [saved.lat, saved.lng, saved.zoom].every(Number.isFinite) && Math.abs(saved.lat) <= 85) {
+      return { lat: saved.lat, lng: saved.lng, zoom: saved.zoom };
+    }
+  } catch {
+    // nothing usable saved
+  }
+  return null;
+}
+
+// what the readout was showing when the app was last used, if it is still there; otherwise the first place
+function initialFocus(places) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOCUS_KEY));
+    if (saved?.type === 'place' && places.some((p) => p.id === saved.id)) return { type: 'place', id: saved.id };
+    if (saved?.type === 'pin' && Number.isFinite(saved.lat) && Number.isFinite(saved.lng)) {
+      return {
+        type: 'pin',
+        lat: saved.lat,
+        lng: saved.lng,
+        name: typeof saved.name === 'string' ? saved.name : null,
+        region: typeof saved.region === 'string' ? saved.region : null,
+        zone: validZone(saved.zone),
+      };
+    }
+  } catch {
+    // nothing usable saved
+  }
+  return { type: 'place', id: places[0]?.id };
+}
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+// the focus moves to the rider and remembers what it was on, to go back to when the route is closed
+const toRider = (prev) => (prev.type === 'rider' ? prev : { type: 'rider', back: prev });
+
 export default function App() {
-  const { forecast: loaded, error, serviceDown, loading, retry } = useForecast();
+  const { store, wind } = useWind();
   const now = useNow();
-  // a forecast whose last hour has passed has nothing to say about now
-  const forecast = loaded && now / 1000 < loaded.hours[loaded.hours.length - 1] + 3600 ? loaded : null;
+  const nowSec = now / 1000;
 
   const [theme, setTheme] = useState(initialTheme);
   const [flowEnabled, setFlowEnabled] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -53,8 +109,10 @@ export default function App() {
   const [selectedTime, setSelectedTime] = useState(null);
   const [forecastPlaying, setForecastPlaying] = useState(false);
 
-  // What the readout describes: a spot, a tapped point, the rider on the route, or the user's position
-  const [focus, setFocus] = useState(DEFAULT_FOCUS);
+  const [places, setPlaces] = useState(loadPlaces);
+  // What the readout describes: a saved place, a pinned point (tapped or found by search),
+  // the rider on the route, or the user's position
+  const [focus, setFocus] = useState(() => initialFocus(places));
   const [user, setUser] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
 
@@ -64,82 +122,42 @@ export default function App() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [rideKmh, setRideKmh] = useState(25);
 
-  const [menuOpen, setMenuOpen] = useState(false);
+  // which toolbar menu is open: 'places', 'routes' or null
+  const [menu, setMenu] = useState(null);
   const [routeError, setRouteError] = useState(null);
   const [notice, setNotice] = useState(null);
+
+  // what the map shows once it has come to rest: { bounds, center, zoom }
+  const [view, setView] = useState(null);
+  const [mapMoving, setMapMoving] = useState(false);
+  // false while the start-up position fix may still move the map somewhere else
+  const [viewReady, setViewReady] = useState(() => !navigator.geolocation);
 
   const mapRef = useRef(null);
   const readoutRef = useRef(null);
   const dockRef = useRef(null);
+  const toolbarRef = useRef(null);
+  const placesButtonRef = useRef(null);
   const routesButtonRef = useRef(null);
+  const [startView] = useState(initialView);
   // true once the user (or a successful start-up GPS fix) has decided what the map shows
   const viewClaimed = useRef(false);
   const loadId = useRef(0);
   const riderIdxRef = useRef(0);
+  const placesRef = useRef(places);
+  const viewAsked = useRef(false);
 
-  const notify = useCallback((text) => setNotice({ text, id: Date.now() }), []);
+  const notify = useCallback((text, action = null) => setNotice({ text, action, id: Date.now() }), []);
 
-  // ----- time -----
-  const nowIndex = forecast ? currentHourIndex(forecast.hours, now) : 0;
-  const windowStart = Math.max(0, nowIndex - HOURS_BACK);
-  const windowEnd = forecast ? Math.min(forecast.hours.length - 1, nowIndex + HOURS_AHEAD) : 0;
-
-  // When the clock catches up with an hour that was picked in advance, go back to following the clock.
-  const [seenNowIndex, setSeenNowIndex] = useState(nowIndex);
-  if (nowIndex !== seenNowIndex) {
-    setSeenNowIndex(nowIndex);
-    if (forecast && selectedTime !== null && selectedTime <= forecast.hours[nowIndex]) setSelectedTime(null);
-  }
-
-  const followingNow = selectedTime === null;
-  const hourIndex = useMemo(() => {
-    if (!forecast || selectedTime === null) return nowIndex;
-    const i = forecast.hours.indexOf(selectedTime);
-    return i < 0 ? nowIndex : clamp(i, windowStart, windowEnd);
-  }, [forecast, selectedTime, nowIndex, windowStart, windowEnd]);
-
-  // The moment the map shows, as a (possibly fractional) index into forecast.hours and as unix seconds.
-  // "Now" is the current minute, blended between the two hours around it, not the last full hour.
-  const hourValue = forecast && followingNow
-    ? nowIndex + clamp((now / 1000 - forecast.hours[nowIndex]) / 3600, 0, 1)
-    : hourIndex;
-  const shownTime = forecast ? (followingNow ? Math.floor(now / 1000) : forecast.hours[hourIndex]) : null;
-
-  const selectHour = useCallback((index) => {
-    if (!forecast) return;
-    setSelectedTime(index === nowIndex ? null : forecast.hours[index]);
-  }, [forecast, nowIndex]);
-
-  useEffect(() => {
-    if (!forecastPlaying || !forecast) return undefined;
-    const timer = setInterval(() => {
-      setSelectedTime((prev) => {
-        const current = prev === null ? nowIndex : forecast.hours.indexOf(prev);
-        const next = current < 0 || current >= windowEnd ? nowIndex : current + 1;
-        return next === nowIndex ? null : forecast.hours[next];
-      });
-    }, 650);
-    return () => clearInterval(timer);
-  }, [forecastPlaying, forecast, nowIndex, windowEnd]);
-
-  // ----- wind -----
-  const field = useMemo(() => (forecast ? buildField(forecast, hourValue) : null), [forecast, hourValue]);
-  const analysis = useMemo(
-    () => (route && forecast ? analyseRoute(route, forecast, hourValue, rideKmh) : null),
-    [route, forecast, hourValue, rideKmh],
-  );
-  // a route that mostly lies outside the forecast grid has no wind to colour it with
-  const routeHasWind = analysis !== null && analysis.outsideKm < route.totalDistance * 0.5;
-
-  const routeStops = useMemo(() => {
-    if (!route || !analysis || !routeHasWind) return null;
-    return routeGradient(route, analysis.wind.map((w) => w.head), theme);
-  }, [route, analysis, routeHasWind, theme]);
+  const updatePlaces = useCallback((next) => {
+    placesRef.current = next;
+    setPlaces(next);
+    savePlaces(next);
+  }, []);
 
   // ----- focus -----
   const riderPoint = route ? route.points[Math.min(riderIdx, route.points.length - 1)] : null;
-  const riderWind = analysis ? analysis.wind[Math.min(riderIdx, analysis.wind.length - 1)] : null;
-  const onRoute = focus.type === 'rider' && riderPoint !== null && riderWind !== null;
+  const followingRider = focus.type === 'rider' && route !== null;
 
   const focusPlace = useMemo(() => {
     if (focus.type === 'rider' && riderPoint) {
@@ -147,19 +165,120 @@ export default function App() {
       return { lat: riderPoint.lat, lng: riderPoint.lng, title: `${route.name}, km ${km}`, place: `km ${km}` };
     }
     if (focus.type === 'pin') {
-      return { lat: focus.lat, lng: focus.lng, title: 'Pinned point', place: 'the pinned point', note: `${focus.lat.toFixed(3)}, ${focus.lng.toFixed(3)}` };
+      const coordinates = `${focus.lat.toFixed(3)}, ${focus.lng.toFixed(3)}`;
+      return {
+        lat: focus.lat,
+        lng: focus.lng,
+        title: focus.name ?? 'Pinned point',
+        place: focus.name ?? 'the pinned point',
+        note: focus.name ? focus.region || coordinates : coordinates,
+        zone: focus.zone,
+      };
     }
     if (focus.type === 'me' && user) {
-      return { lat: user.lat, lng: user.lng, title: 'My location', place: 'your location', note: 'Your GPS position.' };
+      return { lat: user.lat, lng: user.lng, title: 'My location', place: 'your location', note: 'Your GPS position.', zone: DEVICE_ZONE };
     }
-    const spot = SPOTS.find((s) => s.id === focus.id) ?? SPOTS[0];
-    return { lat: spot.lat, lng: spot.lng, title: spot.name, place: spot.label, note: spot.desc };
-  }, [focus, riderPoint, route, user]);
+    const place = places.find((p) => p.id === focus.id) ?? places[0];
+    if (!place) return null;
+    return { id: place.id, lat: place.lat, lng: place.lng, title: place.name, place: place.label || place.name, note: place.desc || place.region, zone: place.zone };
+  }, [focus, riderPoint, route, user, places]);
+  const focusedPlaceId = focusPlace?.id ?? null;
+
+  // The time bar describes one fixed place. While following the rider that place is the start of the
+  // route, so the bars answer "when should I leave" and do not change with every step of the ride.
+  // With nothing in focus they describe the middle of the map.
+  const barsSpot = followingRider ? route.points[0] : focusPlace;
+  const barsLat = barsSpot?.lat ?? view?.center.lat ?? null;
+  const barsLng = barsSpot?.lng ?? view?.center.lng ?? null;
+  const barsPlace = followingRider ? 'the start' : focusPlace ? focusPlace.place : 'the centre of the map';
+  const barsOptions = barsSpot ? POINT : undefined;
+
+  // Times are shown in the local time of that place: the zone it is known to be in, or the zone of the
+  // nearest forecast point, or (until one is loaded) the device's own.
+  const knownZone = followingRider ? null : validZone(focusPlace?.zone);
+  const zone = useMemo(() => {
+    if (knownZone) return knownZone;
+    return (barsLat !== null && validZone(wind.zoneAt(barsLat, barsLng))) || DEVICE_ZONE;
+  }, [knownZone, wind, barsLat, barsLng]);
+
+  // ----- time -----
+  // the hour in progress, as that place's clock counts hours
+  const hourBase = hourStart(nowSec, zone);
+  const firstHour = hourBase - HOURS_BACK * HOUR;
+  const lastHour = hourBase + HOURS_AHEAD * HOUR;
+
+  // When the clock catches up with an hour that was picked in advance, go back to following the clock.
+  const [seenHour, setSeenHour] = useState(hourBase);
+  if (hourBase !== seenHour) {
+    setSeenHour(hourBase);
+    if (selectedTime !== null && selectedTime <= hourBase) setSelectedTime(null);
+  }
+
+  const followingNow = selectedTime === null;
+  // the chosen hour as one of the bars
+  const selectedHour = followingNow
+    ? hourBase
+    : clamp(hourBase + Math.round((selectedTime - hourBase) / HOUR) * HOUR, firstHour, lastHour);
+  // The moment the map shows, in unix seconds. "Now" is the current minute, read between the two forecast
+  // hours around it, not the last full hour.
+  const shownTime = followingNow ? Math.floor(nowSec) : selectedHour;
+
+  const selectHour = useCallback((time) => setSelectedTime(time === hourBase ? null : time), [hourBase]);
+
+  useEffect(() => {
+    if (!forecastPlaying) return undefined;
+    const timer = setInterval(() => {
+      setSelectedTime((prev) => {
+        const current = prev === null ? hourBase : prev;
+        const next = current >= lastHour ? hourBase : current + HOUR;
+        return next === hourBase ? null : next;
+      });
+    }, 650);
+    return () => clearInterval(timer);
+  }, [forecastPlaying, hourBase, lastHour]);
+
+  // ----- wind -----
+  const frame = useMemo(() => wind.frame(shownTime), [wind, shownTime]);
+
+  const routeNodes = useMemo(() => (route ? nodesAlong(route.points, ROUTE_MAX_POINTS) : []), [route]);
+  const routeLevel = routeNodes.length > 0 ? routeNodes[0].level : 0;
+  const analysis = useMemo(() => {
+    if (!route) return null;
+    // the rider is somewhere else at every moment, so each point of the route is read at its own time
+    const forecast = { sample: (lat, lng, hour) => wind.sample(lat, lng, hour * HOUR, { maxLevel: routeLevel, late: true }) };
+    return analyseRoute(route, forecast, shownTime / HOUR, rideKmh);
+  }, [route, routeLevel, wind, shownTime, rideKmh]);
+  // a route with no forecast for most of its length has no wind to colour it with
+  const routeHasWind = analysis !== null && analysis.outsideKm < route.totalDistance * 0.5;
+  const routeState = wind.state(routeNodes);
+
+  const routeStops = useMemo(() => {
+    if (!route || !analysis || !routeHasWind) return null;
+    return routeGradient(route, analysis.wind.map((w) => w.head), theme);
+  }, [route, analysis, routeHasWind, theme]);
+
+  const riderWind = analysis ? analysis.wind[Math.min(riderIdx, analysis.wind.length - 1)] : null;
+  const onRoute = focus.type === 'rider' && riderPoint !== null && riderWind !== null;
+
+  const focusNodes = useMemo(() => (barsSpot ? nodesAround(0, barsSpot.lat, barsSpot.lng) : []), [barsSpot]);
 
   const reading = useMemo(() => {
-    if (onRoute) return riderWind;
-    return field ? sampleField(field, focusPlace.lat, focusPlace.lng) : null;
-  }, [onRoute, riderWind, field, focusPlace.lat, focusPlace.lng]);
+    if (onRoute) return riderWind.outside ? null : riderWind;
+    return focusPlace ? wind.sample(focusPlace.lat, focusPlace.lng, shownTime, POINT) : null;
+  }, [onRoute, riderWind, focusPlace, wind, shownTime]);
+
+  // when the forecast behind the reading was downloaded
+  const readingAge = useMemo(() => {
+    if (!reading) return null;
+    if (!onRoute) return reading.fetchedAt;
+    return wind.sample(riderPoint.lat, riderPoint.lng, shownTime, { maxLevel: routeLevel, late: true })?.fetchedAt ?? null;
+  }, [reading, onRoute, riderPoint, wind, shownTime, routeLevel]);
+
+  const focusState = onRoute ? routeState : wind.state(focusNodes);
+  const status = !focusPlace ? 'empty' : reading ? 'ready' : focusState === 'loading' ? 'loading' : focusState === 'failed' ? 'error' : 'none';
+  const problem = wind.problem?.kind ?? null;
+  // an old forecast that could not be renewed is still shown, and the readout says how old it is
+  const readingStale = problem !== null && readingAge !== null && now - readingAge > STALE_MS;
 
   const riderInfo = useMemo(() => {
     if (!riderPoint || !riderWind) return null;
@@ -168,7 +287,7 @@ export default function App() {
       lng: riderPoint.lng,
       bearing: riderPoint.bearing,
       // still air has no direction to draw
-      from: routeHasWind && riderWind.speed >= CALM_KMH ? riderWind.from : null,
+      from: routeHasWind && !riderWind.outside && riderWind.speed >= CALM_KMH ? riderWind.from : null,
       head: riderWind.head,
       cross: riderWind.cross,
       color: effectColor(riderWind.head, theme),
@@ -177,61 +296,91 @@ export default function App() {
 
   // the time shown next to the place: for the rider, when they get to that point
   const whenLabel = useMemo(() => {
-    if (shownTime === null) return null;
-    if (!onRoute) return formatDayClock(shownTime);
-    const arrival = formatDayClock(shownTime + (riderPoint.distance / rideKmh) * 3600);
-    return riderPoint.distance < 0.05 ? `leaving ${arrival}` : `arriving ${arrival}`;
-  }, [shownTime, onRoute, riderPoint, rideKmh]);
-
-  const spots = useMemo(() => SPOTS.map((spot) => {
-    const wind = field ? sampleField(field, spot.lat, spot.lng) : null;
-    return {
-      id: spot.id,
-      label: spot.label,
-      lat: spot.lat,
-      lng: spot.lng,
-      anchor: spot.anchor,
-      speed: wind?.speed,
-      from: wind?.from,
-      selected: focus.type === 'spot' && focus.id === spot.id,
+    // a clock that is not the reader's own says which one it is
+    const stamp = (time) => {
+      const offset = zoneLabel(time, zone);
+      return `${formatDayClock(time, zone)}${offset && ` ${offset}`}`;
     };
-  }), [field, focus]);
+    if (!onRoute) return stamp(shownTime);
+    const arrival = stamp(shownTime + (riderPoint.distance / rideKmh) * HOUR);
+    return riderPoint.distance < 0.05 ? `leaving ${arrival}` : `arriving ${arrival}`;
+  }, [shownTime, zone, onRoute, riderPoint, rideKmh]);
+
+  const spots = useMemo(() => places.map((place) => {
+    const here = wind.sample(place.lat, place.lng, shownTime, POINT);
+    return {
+      id: place.id,
+      label: place.label || place.name,
+      lat: place.lat,
+      lng: place.lng,
+      anchor: place.anchor,
+      speed: here?.speed,
+      from: here?.from,
+      selected: place.id === focusedPlaceId,
+    };
+  }), [places, wind, shownTime, focusedPlaceId]);
 
   const pin = useMemo(() => (focus.type === 'pin' ? { lat: focus.lat, lng: focus.lng } : null), [focus]);
 
-  // The time bar describes one fixed place. While following the rider that place is the start of the
-  // route, so the bars answer "when should I leave" and do not change with every step of the ride.
-  // A place outside the forecast area has no wind to plot, so the bars fall back to the first spot.
-  const barsAtStart = focus.type === 'rider' && route !== null;
-  const barsWanted = barsAtStart ? route.points[0] : focusPlace;
-  const barsOutside = !inCoverage(barsWanted.lat, barsWanted.lng);
-  const barsLat = barsOutside ? SPOTS[0].lat : barsWanted.lat;
-  const barsLng = barsOutside ? SPOTS[0].lng : barsWanted.lng;
-  const barsPlace = barsOutside ? SPOTS[0].label : barsAtStart ? 'the start' : focusPlace.place;
   const series = useMemo(() => {
-    if (!forecast) return [];
     const hours = [];
-    for (let h = windowStart; h <= windowEnd; h++) {
-      const wind = sampleField(buildField(forecast, h), barsLat, barsLng);
-      hours.push({ index: h, time: forecast.hours[h], speed: wind.speed, gust: wind.gust });
+    for (let time = firstHour; time <= lastHour; time += HOUR) {
+      const here = barsLat === null ? null : wind.sample(barsLat, barsLng, time, barsOptions);
+      hours.push({ time, speed: here ? here.speed : null, gust: here ? here.gust : null });
     }
     return hours;
-  }, [forecast, windowStart, windowEnd, barsLat, barsLng]);
+  }, [wind, firstHour, lastHour, barsLat, barsLng, barsOptions]);
+  const nowReading = followingNow && barsLat !== null ? wind.sample(barsLat, barsLng, shownTime, barsOptions) : null;
 
-  // ----- routes menu -----
-  const closeMenu = useCallback((returnFocus = false) => {
-    setMenuOpen(false);
-    if (returnFocus) routesButtonRef.current?.focus();
+  // ----- what the store is asked to download -----
+  useEffect(() => {
+    store.want('focus', focusNodes);
+  }, [store, focusNodes]);
+
+  useEffect(() => {
+    store.want('route', routeNodes);
+  }, [store, routeNodes]);
+
+  // The map view only counts once it has stopped moving. It is covered by the finest lattice that does
+  // not take more points than the allowance for a view.
+  const settledView = viewReady && !mapMoving ? view : null;
+  const viewNodes = useMemo(() => {
+    if (!settledView) return [];
+    return nodesInBounds(levelForBounds(settledView.bounds, VIEW_MAX_POINTS), settledView.bounds);
+  }, [settledView]);
+  // the labels of the saved places in view carry their own wind, read as closely as a place in focus
+  const placeNodes = useMemo(() => {
+    if (!settledView) return [];
+    const inView = places.filter((p) => inBounds(settledView.bounds, p.lat, p.lng)).slice(0, PLACES_WITH_WIND);
+    return inView.flatMap((p) => nodesAround(0, p.lat, p.lng));
+  }, [settledView, places]);
+
+  // the view the app opens on is asked for at once; later ones once the map has settled
+  useEffect(() => {
+    const delay = viewAsked.current ? VIEW_SETTLE_MS : 0;
+    store.want('view', viewNodes, delay);
+    store.want('places', placeNodes, delay);
+    if (viewNodes.length > 0) viewAsked.current = true;
+  }, [store, viewNodes, placeNodes]);
+
+  // how far the wind for the part of the map on screen is: 'ready' | 'loading' | 'failed'
+  const viewState = wind.state(viewNodes);
+
+  // ----- menus -----
+  const closeMenu = useCallback((returnTo = null) => {
+    setMenu(null);
+    returnTo?.current?.focus();
   }, []);
 
-  const toggleMenu = () => {
-    if (!menuOpen) setRouteError(null);
-    setMenuOpen(!menuOpen);
+  const toggleMenu = (name) => {
+    if (menu !== name && name === 'routes') setRouteError(null);
+    setMenu(menu === name ? null : name);
   };
 
   useEffect(() => {
-    if (!menuOpen) return undefined;
-    const onKey = (e) => e.key === 'Escape' && closeMenu(true);
+    if (!menu) return undefined;
+    const button = menu === 'places' ? placesButtonRef : routesButtonRef;
+    const onKey = (e) => e.key === 'Escape' && closeMenu(button);
     // a tap on any panel closes the menu; a tap on the map is handled in handlePick so it does not also drop a pin
     const onPointerDown = (e) => {
       if (!e.target.closest('.toolbar-menu') && !e.target.closest('.wind-map')) closeMenu();
@@ -242,7 +391,63 @@ export default function App() {
       window.removeEventListener('keydown', onKey);
       document.removeEventListener('pointerdown', onPointerDown);
     };
-  }, [menuOpen, closeMenu]);
+  }, [menu, closeMenu]);
+
+  // ----- places -----
+  const showPlace = (place, returnTo = null) => {
+    viewClaimed.current = true;
+    closeMenu(returnTo);
+    setFocus({ type: 'place', id: place.id });
+    mapRef.current?.focusOn(place.lat, place.lng, 11);
+  };
+
+  // a search result is a pinned point with a name, which can then be saved as a place
+  const showResult = (result) => {
+    viewClaimed.current = true;
+    closeMenu(placesButtonRef);
+    setFocus({
+      type: 'pin',
+      lat: result.lat,
+      lng: result.lng,
+      name: result.name ?? null,
+      region: result.region || null,
+      zone: validZone(result.zone),
+    });
+    mapRef.current?.focusOn(result.lat, result.lng, 11);
+  };
+
+  const saveFocus = (name) => {
+    if (!focusPlace) return;
+    const place = makePlace(name, focusPlace.lat, focusPlace.lng, {
+      region: focus.type === 'pin' ? focus.region : null,
+      zone: validZone(focusPlace.zone),
+    });
+    updatePlaces([...placesRef.current, place]);
+    setFocus({ type: 'place', id: place.id });
+  };
+
+  const removeFocus = () => {
+    const current = placesRef.current;
+    const index = current.findIndex((p) => p.id === focusedPlaceId);
+    if (index < 0) return;
+    const place = current[index];
+    updatePlaces(current.filter((p) => p !== place));
+    // the point stays in focus as a pin, so the map and the readout do not jump somewhere else
+    setFocus({ type: 'pin', lat: place.lat, lng: place.lng, name: place.name, region: place.region ?? null, zone: validZone(place.zone) });
+    notify(`Removed ${place.name} from your places.`, {
+      label: 'Undo',
+      run: () => {
+        const latest = placesRef.current;
+        if (!latest.some((p) => p.id === place.id)) {
+          const restored = [...latest];
+          restored.splice(Math.min(index, restored.length), 0, place);
+          updatePlaces(restored);
+        }
+        setFocus({ type: 'place', id: place.id });
+        setNotice(null);
+      },
+    });
+  };
 
   // ----- route -----
   const openRoute = useCallback((parsed) => {
@@ -250,9 +455,9 @@ export default function App() {
     setRoute(parsed);
     setRiderIdx(0);
     setRidePlaying(false);
-    setFocus({ type: 'rider' });
+    setFocus(toRider);
     setRouteError(null);
-    closeMenu(true);
+    closeMenu(routesButtonRef);
   }, [closeMenu]);
 
   const loadPreset = useCallback(async (preset) => {
@@ -274,7 +479,7 @@ export default function App() {
     const id = ++loadId.current;
     if (!/\.gpx$/i.test(file.name)) {
       setRouteError('Only .gpx files can be opened.');
-      setMenuOpen(true);
+      setMenu('routes');
       return;
     }
     try {
@@ -283,16 +488,22 @@ export default function App() {
     } catch (err) {
       if (id !== loadId.current) return;
       setRouteError(err.message || 'Could not read this GPX file.');
-      setMenuOpen(true);
+      setMenu('routes');
     }
   }, [openRoute]);
 
   const clearRoute = () => {
     setRoute(null);
     setRidePlaying(false);
-    setFocus((prev) => (prev.type === 'rider' ? DEFAULT_FOCUS : prev));
-    // wait a frame so the route panel is gone before the map measures the room it has
-    requestAnimationFrame(() => mapRef.current?.fitCoverage());
+    if (focus.type !== 'rider') return;
+    // the readout goes back to what it was on before the route
+    const back = focus.back ?? { type: 'place', id: places[0]?.id };
+    setFocus(back);
+    const target = back.type === 'pin' ? back : back.type === 'me' ? user : places.find((p) => p.id === back.id) ?? places[0];
+    // nothing to do when it is on the map already (which cannot be told while the map is still on its way somewhere)
+    if (!target || (view && !mapMoving && inBounds(view.bounds, target.lat, target.lng))) return;
+    // it is somewhere else: wait a frame, so the route panel is gone before the map measures the room it has
+    requestAnimationFrame(() => mapRef.current?.focusOn(target.lat, target.lng, 10));
   };
 
   const lastRoutePoint = route ? route.points.length - 1 : 0;
@@ -306,7 +517,7 @@ export default function App() {
   const scrubRoute = useCallback((index) => {
     setRidePlaying(false);
     setRiderIdx(index);
-    setFocus((prev) => (prev.type === 'rider' ? prev : { type: 'rider' }));
+    setFocus(toRider);
   }, []);
 
   const toggleRide = () => {
@@ -315,7 +526,7 @@ export default function App() {
       return;
     }
     if (riderIdx >= lastRoutePoint) setRiderIdx(0);
-    setFocus({ type: 'rider' });
+    setFocus(toRider);
     setRidePlaying(true);
   };
 
@@ -349,17 +560,12 @@ export default function App() {
   // ----- location -----
   const showPosition = useCallback((lat, lng, onStart) => {
     setUser({ lat, lng });
-    if (!inCoverage(lat, lng)) {
-      // the dot is drawn, but the map stays on the area that has a forecast
-      if (!onStart) notify('You are outside the forecast area, which covers greater Lisbon.');
-      return;
-    }
     // a slow start-up fix must not pull the map away from what the user has opened meanwhile
     if (onStart && viewClaimed.current) return;
     viewClaimed.current = true;
     setFocus({ type: 'me' });
     mapRef.current?.focusOn(lat, lng, 13);
-  }, [notify]);
+  }, []);
 
   const locate = () => {
     if (!navigator.geolocation) {
@@ -383,39 +589,54 @@ export default function App() {
     );
   };
 
-  // try once on start, quietly: if it works the map opens on the rider
+  // Try once on start, quietly: if it works the map opens on the rider. The wind for the opening view
+  // waits a moment for that answer, so it is not downloaded for a place the map is about to leave.
   useEffect(() => {
-    navigator.geolocation?.getCurrentPosition(
-      (position) => showPosition(position.coords.latitude, position.coords.longitude, true),
-      () => {},
+    if (!navigator.geolocation) return undefined;
+    const release = () => setViewReady(true);
+    const timer = setTimeout(release, START_HOLD_MS);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        showPosition(position.coords.latitude, position.coords.longitude, true);
+        release();
+      },
+      release,
       GEO_QUICK,
     );
+    return () => clearTimeout(timer);
   }, [showPosition]);
 
   // ----- map callbacks -----
   const handlePick = useCallback((lat, lng) => {
-    if (menuOpen) {
-      // tapping the map with the menu open only closes the menu
+    if (menu) {
+      // tapping the map with a menu open only closes the menu
       closeMenu();
       return;
     }
-    // only points with a forecast can be read
-    if (!inCoverage(lat, lng)) return;
     viewClaimed.current = true;
-    setFocus({ type: 'pin', lat, lng });
-  }, [menuOpen, closeMenu]);
+    setFocus({ type: 'pin', lat, lng, name: null, region: null, zone: null });
+  }, [menu, closeMenu]);
 
-  const handleSpot = useCallback((id) => {
-    const spot = SPOTS.find((s) => s.id === id);
-    viewClaimed.current = true;
-    closeMenu();
-    setFocus({ type: 'spot', id });
-    mapRef.current?.focusOn(spot.lat, spot.lng, 11);
-  }, [closeMenu]);
+  const handleSpot = (id) => {
+    const place = places.find((p) => p.id === id);
+    if (place) showPlace(place);
+  };
 
-  // once the map has been moved by hand, nothing automatic (late GPS fix, late forecast) moves it again
+  // once the map has been moved by hand, a late GPS fix does not move it again
   const handleUserMove = useCallback(() => {
     viewClaimed.current = true;
+  }, []);
+
+  const handleMoveStart = useCallback(() => setMapMoving(true), []);
+
+  const handleViewChange = useCallback((next) => {
+    setView(next);
+    setMapMoving(false);
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify({ lat: next.center.lat, lng: next.center.lng, zoom: next.zoom }));
+    } catch {
+      // the view just will not be remembered
+    }
   }, []);
 
   // room the floating panels take, so the map fits things into what is left
@@ -428,16 +649,11 @@ export default function App() {
     return { top: 28, bottom: dockHeight + 36, left: (readout?.offsetWidth ?? 0) + 40, right: 60 };
   }, []);
 
-  // Once the forecast is in, the time bar has its real height: fit the home view again around it,
-  // unless the user or the GPS has already moved the map.
-  const hasForecast = forecast !== null;
-  useEffect(() => {
-    if (!hasForecast) return undefined;
-    const frame = requestAnimationFrame(() => {
-      if (!viewClaimed.current) mapRef.current?.fitCoverage(false);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [hasForecast]);
+  // where the floating panels are, so the map draws no wind arrow half under one of them
+  const getCovered = useCallback(
+    () => [readoutRef, toolbarRef, dockRef].map((panel) => panel.current?.getBoundingClientRect()).filter(Boolean),
+    [],
+  );
 
   // ----- page-level effects -----
   useEffect(() => {
@@ -454,6 +670,16 @@ export default function App() {
     }
   }, [theme]);
 
+  // the place or point in focus is where the readout starts next time
+  useEffect(() => {
+    if (focus.type !== 'place' && focus.type !== 'pin') return;
+    try {
+      localStorage.setItem(FOCUS_KEY, JSON.stringify(focus));
+    } catch {
+      // it just will not be remembered
+    }
+  }, [focus]);
+
   // map controls sit above the dock, whatever its height
   useEffect(() => {
     const dock = dockRef.current;
@@ -466,19 +692,25 @@ export default function App() {
 
   useEffect(() => {
     if (!notice) return undefined;
-    const timer = setTimeout(() => setNotice(null), 6000);
+    const timer = setTimeout(() => setNotice(null), notice.action ? 9000 : 6000);
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const status = forecast ? 'ready' : error && !loading ? 'error' : 'loading';
   const colors = MAP_THEMES[theme];
+  // the place in focus can be saved, or removed if it already is one; the rider on a route is neither
+  const savable = followingRider || !focusPlace ? null : {
+    key: focusedPlaceId ? `place:${focusedPlaceId}` : focus.type === 'pin' ? `pin:${focus.lat},${focus.lng}` : 'me',
+    saved: focusedPlaceId !== null,
+    name: focus.type === 'pin' ? focus.name : null,
+  };
 
   return (
     <div className="app">
       <WindMap
         ref={mapRef}
         theme={theme}
-        field={field}
+        initialView={startView}
+        frame={frame}
         flowEnabled={flowEnabled}
         spots={spots}
         route={route}
@@ -489,41 +721,69 @@ export default function App() {
         onPick={handlePick}
         onSpot={handleSpot}
         onUserMove={handleUserMove}
+        onMoveStart={handleMoveStart}
+        onViewChange={handleViewChange}
         getPadding={getPadding}
+        getCovered={getCovered}
       />
 
       <WindReadout
         ref={readoutRef}
-        title={focusPlace.title}
-        when={whenLabel}
+        title={focusPlace ? focusPlace.title : 'Wind'}
+        when={focusPlace ? whenLabel : null}
         reading={reading}
         rider={onRoute && routeHasWind ? riderInfo : null}
-        note={focusPlace.note}
-        outside={reading?.outside}
+        note={focusPlace?.note}
         status={status}
-        updatedAt={forecast ? formatDayClock(forecast.fetchedAt / 1000) : null}
-        offlineSince={error && forecast ? formatDayClock(forecast.fetchedAt / 1000) : null}
-        serviceDown={serviceDown}
+        problem={problem}
+        updatedAt={readingAge ? formatDayClock(readingAge / 1000, zone) : null}
+        stale={readingStale}
         quiet={isRiding || forecastPlaying}
-        onRetry={retry}
+        place={savable}
+        onSave={saveFocus}
+        onRemove={removeFocus}
+        onRetry={store.retry}
       />
 
-      <div className="toolbar">
+      <div className="toolbar" ref={toolbarRef}>
+        <div className="toolbar-menu">
+          <button
+            ref={placesButtonRef}
+            type="button"
+            className="tool-button panel"
+            aria-label="Search places"
+            aria-expanded={menu === 'places'}
+            aria-controls={PLACES_MENU_ID}
+            onClick={() => toggleMenu('places')}
+          >
+            <MagnifyingGlass size={18} aria-hidden="true" />
+            <span>Search</span>
+          </button>
+          {menu === 'places' && (
+            <PlacesMenu
+              id={PLACES_MENU_ID}
+              places={places}
+              activeId={focusedPlaceId}
+              onPlace={(place) => showPlace(place, placesButtonRef)}
+              onResult={showResult}
+            />
+          )}
+        </div>
         <div className="toolbar-menu">
           <button
             ref={routesButtonRef}
             type="button"
             className="tool-button panel"
             aria-label="Routes"
-            aria-expanded={menuOpen}
-            aria-controls={MENU_ID}
-            onClick={toggleMenu}
+            aria-expanded={menu === 'routes'}
+            aria-controls={ROUTES_MENU_ID}
+            onClick={() => toggleMenu('routes')}
           >
             <Path size={18} aria-hidden="true" />
             <span>Routes</span>
           </button>
-          {menuOpen && (
-            <RoutesMenu id={MENU_ID} activeId={route?.id} error={routeError} onPreset={loadPreset} onFile={loadFile} />
+          {menu === 'routes' && (
+            <RoutesMenu id={ROUTES_MENU_ID} activeId={route?.id} error={routeError} onPreset={loadPreset} onFile={loadFile} />
           )}
         </div>
         <button
@@ -559,13 +819,36 @@ export default function App() {
         </button>
       </div>
 
-      {notice && <p key={notice.id} className="notice panel" role="status">{notice.text}</p>}
+      {/* the readout already says so when the place in focus could not be loaded either */}
+      {(viewState === 'loading' || (viewState === 'failed' && status !== 'error')) && (
+        <p className={`map-status panel ${viewState}`} role="status">
+          {viewState === 'loading' ? 'Loading the wind…' : (
+            <>
+              The wind for this part of the map could not be loaded.{' '}
+              <button type="button" className="text-button" onClick={store.retry}>Try again</button>
+            </>
+          )}
+        </p>
+      )}
+
+      {notice && (
+        <p key={notice.id} className="notice panel" role="status">
+          {notice.text}
+          {notice.action && (
+            <>
+              {' '}
+              <button type="button" className="text-button" onClick={notice.action.run}>{notice.action.label}</button>
+            </>
+          )}
+        </p>
+      )}
 
       <div className="dock" ref={dockRef}>
         {route && (
           <RoutePanel
             route={route}
             analysis={analysis}
+            windState={routeState}
             riderIdx={riderIdx}
             onScrub={scrubRoute}
             onClear={clearRoute}
@@ -575,21 +858,22 @@ export default function App() {
             onPlaybackRate={setPlaybackRate}
             rideKmh={rideKmh}
             onRideKmh={setRideKmh}
-            startLabel={shownTime === null ? '' : followingNow ? `now (${formatClock(shownTime)})` : formatDayClock(shownTime)}
+            startLabel={followingNow ? `now (${formatClock(shownTime, zone)})` : formatDayClock(shownTime, zone)}
             colors={colors}
           />
         )}
         <TimeBar
           hours={series}
-          selected={hourIndex}
-          nowIndex={nowIndex}
+          selected={selectedHour}
+          nowTime={hourBase}
           shownTime={shownTime}
-          nowReading={followingNow && field ? sampleField(field, barsLat, barsLng) : null}
+          nowReading={nowReading}
           onSelect={selectHour}
           playing={forecastPlaying}
           onTogglePlay={() => setForecastPlaying((playing) => !playing)}
           place={barsPlace}
-          rideStart={barsAtStart && !barsOutside}
+          zone={zone}
+          rideStart={followingRider}
         />
       </div>
     </div>

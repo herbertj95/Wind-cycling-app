@@ -4,11 +4,14 @@ import { createWindMap } from '../map/windMap';
 /**
  * Full-screen wind map. The map is created once and kept for the life of the app; props are pushed
  * into it as they change, so switching hour, theme or route never rebuilds it or loses the view.
+ * - initialView: { lat, lng, zoom } the map opens on (only read when the map is created)
+ * - frame: the wind at the moment shown (see windStore.frame)
  */
 export default function WindMap({
   ref,
   theme,
-  field,
+  initialView,
+  frame,
   flowEnabled,
   spots,
   route,
@@ -19,16 +22,19 @@ export default function WindMap({
   onPick,
   onSpot,
   onUserMove,
+  onMoveStart,
+  onViewChange,
   getPadding,
+  getCovered,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
-  const initial = useRef({ theme, flowEnabled });
-  const handlers = useRef({ onPick, onSpot, onUserMove, getPadding });
+  const initial = useRef({ theme, flowEnabled, view: initialView });
+  const handlers = useRef({ onPick, onSpot, onUserMove, onMoveStart, onViewChange, getPadding, getCovered });
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
-    handlers.current = { onPick, onSpot, onUserMove, getPadding };
+    handlers.current = { onPick, onSpot, onUserMove, onMoveStart, onViewChange, getPadding, getCovered };
   });
 
   useEffect(() => {
@@ -37,10 +43,14 @@ export default function WindMap({
       controller = createWindMap(containerRef.current, {
         theme: initial.current.theme,
         flowEnabled: initial.current.flowEnabled,
+        view: initial.current.view,
         onPick: (lat, lng) => handlers.current.onPick(lat, lng),
         onSpot: (id) => handlers.current.onSpot(id),
         onUserMove: () => handlers.current.onUserMove(),
+        onMoveStart: () => handlers.current.onMoveStart(),
+        onViewChange: (view) => handlers.current.onViewChange(view),
         getPadding: () => handlers.current.getPadding(),
+        getCovered: () => handlers.current.getCovered(),
       });
     } catch (error) {
       // MapLibre needs WebGL2. Without it the readout, time bar and route analysis still work.
@@ -57,7 +67,6 @@ export default function WindMap({
 
   useImperativeHandle(ref, () => ({
     focusOn: (lat, lng, minZoom) => mapRef.current?.focusOn(lat, lng, minZoom),
-    fitCoverage: (animate) => mapRef.current?.fitCoverage(animate),
   }), []);
 
   useEffect(() => {
@@ -65,8 +74,8 @@ export default function WindMap({
   }, [theme]);
 
   useEffect(() => {
-    if (field) mapRef.current?.setField(field);
-  }, [field]);
+    mapRef.current?.setFrame(frame);
+  }, [frame]);
 
   useEffect(() => {
     mapRef.current?.setFlowEnabled(flowEnabled);
@@ -97,7 +106,7 @@ export default function WindMap({
   }, [user]);
 
   return (
-    <div ref={containerRef} className="wind-map" aria-label="Wind map of the Lisbon area">
+    <div ref={containerRef} className="wind-map" aria-label="Wind map">
       {unavailable && (
         <p className="map-unavailable">
           This device cannot draw the map. The wind readings, the time bar and the route analysis still work.
