@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createExpression, featureFilter, validateStyleMin } from '@maplibre/maplibre-gl-style-spec';
 import { MAP_THEMES, effectColor, routeGradient, tintBaseStyle, fallbackStyle } from './mapStyle';
 
 const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',')})`;
@@ -128,5 +129,225 @@ describe('tintBaseStyle', () => {
 
   it('has a plain fallback in the theme land colour', () => {
     expect(fallbackStyle('light').layers[0].paint['background-color']).toBe(MAP_THEMES.light.land);
+  });
+});
+
+describe('the names on the map', () => {
+  const font = ['Noto Sans Regular'];
+  const symbol = (id, sourceLayer, layout = {}, extra = {}) => ({
+    id,
+    type: 'symbol',
+    source: 'openmaptiles',
+    'source-layer': sourceLayer,
+    layout: { 'text-field': ['get', 'name'], 'text-font': font, ...layout },
+    ...extra,
+  });
+  // the label layers of the base style, in miniature
+  const base = {
+    version: 8,
+    glyphs: 'https://example.org/fonts/{fontstack}/{range}.pbf',
+    sprite: 'https://example.org/sprite',
+    sources: { openmaptiles: { type: 'vector', url: 'https://example.org/tiles.json' } },
+    layers: [
+      { id: 'background', type: 'background', paint: { 'background-color': '#fff' } },
+      { id: 'highway_minor', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', paint: { 'line-color': '#000' } },
+      symbol('water_name', 'water_name'),
+      symbol('highway-name-minor', 'transportation_name', { 'symbol-placement': 'line', 'text-size': 13 }, { minzoom: 15 }),
+      symbol('highway-name-major', 'transportation_name', { 'symbol-placement': 'line', 'text-size': 13 }, { minzoom: 12.2 }),
+      symbol('highway-shield-non-us', 'transportation_name', { 'icon-image': ['concat', 'road_', ['get', 'ref_length']], 'text-field': ['get', 'ref'] }),
+      symbol('airport', 'aerodrome_label', { 'icon-image': 'airport_11' }),
+      symbol('label_village', 'place', {}, { minzoom: 9 }),
+      symbol('label_town', 'place'),
+    ],
+  };
+  const style = tintBaseStyle(base, 'dark');
+  const ids = style.layers.map((l) => l.id);
+  const layer = (id) => style.layers.find((l) => l.id === id);
+  const added = ['road-refs-motorway', 'road-refs-primary', 'road-refs-secondary', 'road-refs-tertiary', 'airports', 'summits-main', 'summits', 'landmarks-main', 'landmarks-lesser', 'landmarks-rest'];
+
+  /** Whether a layer would draw a feature with these properties. */
+  const shows = (id, properties) => featureFilter(layer(id).filter, `layers.${id}.filter`).filter({ zoom: 14 }, { type: 1, properties });
+  /** What a layer would write for a feature with these properties. */
+  const written = (id, properties) =>
+    createExpression(layer(id).layout['text-field'], `layers.${id}.layout.text-field`).value.evaluate({ zoom: 14 }, { type: 1, properties });
+
+  it('is a style MapLibre accepts, in both themes', () => {
+    expect(validateStyleMin(style)).toEqual([]);
+    expect(validateStyleMin(tintBaseStyle(base, 'light'))).toEqual([]);
+  });
+
+  it('keeps the street names, smaller and a step behind the names of towns', () => {
+    for (const id of ['highway-name-major', 'highway-name-minor']) {
+      expect(layer(id).paint['text-color']).toBe(MAP_THEMES.dark.roadName);
+      expect(layer(id).layout['text-size']).toBe(11);
+      expect(layer(id).layout['symbol-placement']).toBe('line');
+    }
+    expect(MAP_THEMES.dark.roadName).not.toBe(MAP_THEMES.dark.label);
+    expect(layer('label_town').paint['text-color']).toBe(MAP_THEMES.dark.label);
+  });
+
+  it('shows the names of main roads from zoom 13 and of small streets as the base style has them', () => {
+    expect(layer('highway-name-major').minzoom).toBe(13);
+    expect(layer('highway-name-minor').minzoom).toBe(15);
+  });
+
+  it('adds road numbers, airports, summits and landmarks below the names of towns', () => {
+    for (const id of added) expect(ids, id).toContain(id);
+    const firstPlace = Math.min(ids.indexOf('label_village'), ids.indexOf('label_town'));
+    for (const id of added) {
+      expect(ids.indexOf(id), id).toBeLessThan(firstPlace);
+      expect(ids.indexOf(id), id).toBeGreaterThan(ids.indexOf('highway_minor'));
+    }
+  });
+
+  it('writes them as plain text in the landmark colour: the icons of the base style are for a light map', () => {
+    expect(ids).not.toContain('highway-shield-non-us');
+    expect(ids).not.toContain('airport');
+    for (const id of added) {
+      expect(layer(id).layout['icon-image'], id).toBeUndefined();
+      expect(layer(id).paint['text-color'], id).toBe(MAP_THEMES.dark.landmark);
+      expect(layer(id).paint['text-halo-color'], id).toBe(MAP_THEMES.dark.land);
+    }
+    expect(layer('landmarks-main').paint['text-color']).not.toBe(tintBaseStyle(base, 'light').layers.find((l) => l.id === 'landmarks-main').paint['text-color']);
+  });
+
+  it('does not download a sprite that nothing uses, and keeps one that is used', () => {
+    expect('sprite' in style).toBe(false);
+    const withDots = structuredClone(base);
+    withDots.layers.at(-1).layout['icon-image'] = 'circle_11_black';
+    expect(tintBaseStyle(withDots, 'dark').sprite).toBe(base.sprite);
+  });
+
+  it('brings in the names step by step as the map zooms in', () => {
+    expect(layer('road-refs-motorway').minzoom).toBe(10);
+    expect(layer('road-refs-primary').minzoom).toBe(11);
+    expect(layer('road-refs-secondary').minzoom).toBe(12);
+    expect(layer('road-refs-tertiary').minzoom).toBe(13);
+    expect(layer('summits-main').minzoom).toBe(11);
+    expect(layer('summits-main').maxzoom).toBe(layer('summits').minzoom);
+    // the tiles carry no landmarks before zoom 14
+    expect(layer('landmarks-main').minzoom).toBe(14);
+    expect(layer('landmarks-lesser').minzoom).toBe(15);
+    expect(layer('landmarks-rest').minzoom).toBe(16);
+  });
+
+  it('names the landmarks a rider steers by first', () => {
+    for (const cls of ['monument', 'castle', 'museum', 'stadium', 'lighthouse', 'harbor', 'ferry_terminal', 'college', 'campsite']) {
+      expect(shows('landmarks-main', { class: cls, subclass: cls, name: 'X', rank: 30 }), cls).toBe(true);
+    }
+    expect(shows('landmarks-main', { class: 'hospital', subclass: 'hospital', name: 'Hospital de Egas Moniz', rank: 1 })).toBe(true);
+    expect(shows('landmarks-main', { class: 'railway', subclass: 'station', name: 'Sintra', rank: 1 })).toBe(true);
+    expect(shows('landmarks-main', { class: 'railway', subclass: 'halt', name: 'Belém', rank: 4 })).toBe(true);
+    expect(shows('landmarks-main', { class: 'attraction', subclass: 'viewpoint', name: 'Miradouro de Santo Amaro', rank: 10 })).toBe(true);
+  });
+
+  it('leaves out what every street has', () => {
+    const noise = [
+      { class: 'cafe', subclass: 'cafe' },
+      { class: 'restaurant', subclass: 'restaurant' },
+      { class: 'shop', subclass: 'convenience' },
+      { class: 'bus', subclass: 'bus_stop' },
+      { class: 'parking', subclass: 'parking' },
+      { class: 'bank', subclass: 'bank' },
+      // not every hospital-class or railway-class thing is a landmark
+      { class: 'hospital', subclass: 'clinic' },
+      { class: 'railway', subclass: 'tram_stop' },
+      { class: 'railway', subclass: 'subway_entrance' },
+    ];
+    for (const properties of noise) {
+      for (const id of ['landmarks-main', 'landmarks-lesser', 'landmarks-rest']) {
+        expect(shows(id, { ...properties, name: 'X', rank: 1 }), `${properties.subclass} in ${id}`).toBe(false);
+      }
+    }
+  });
+
+  it('names nothing that has no name', () => {
+    expect(shows('landmarks-main', { class: 'monument', subclass: 'monument', rank: 1 })).toBe(false);
+    expect(shows('landmarks-lesser', { class: 'park', subclass: 'park', rank: 1 })).toBe(false);
+    expect(shows('summits', { class: 'peak', ele: 400, rank: 1 })).toBe(false);
+    expect(shows('airports', { iata: 'LIS' })).toBe(false);
+  });
+
+  it('keeps parks, churches and other attractions for a closer look, the first of each area before the rest', () => {
+    for (const cls of ['park', 'garden', 'place_of_worship', 'attraction', 'theatre', 'bicycle']) {
+      const first = { class: cls, subclass: cls, name: 'X', rank: 8 };
+      const further = { ...first, rank: 60 };
+      expect(shows('landmarks-main', first), cls).toBe(false);
+      expect(shows('landmarks-lesser', first), cls).toBe(true);
+      expect(shows('landmarks-rest', first), cls).toBe(false);
+      expect(shows('landmarks-lesser', further), cls).toBe(false);
+      expect(shows('landmarks-rest', further), cls).toBe(true);
+    }
+    // a viewpoint is already on the map from zoom 14: it is not written twice
+    const viewpoint = { class: 'attraction', subclass: 'viewpoint', name: 'Miradouro', rank: 8 };
+    expect(shows('landmarks-lesser', viewpoint)).toBe(false);
+    expect(shows('landmarks-rest', { ...viewpoint, rank: 60 })).toBe(false);
+  });
+
+  it('marks a landmark with a bullet and uses its local name', () => {
+    expect(written('landmarks-main', { name: 'Torre de Belém' })).toBe('• Torre de Belém');
+    expect(written('landmarks-main', { name: '東京タワー', 'name:latin': 'Tokyo Tower' })).toBe('• Tokyo Tower');
+    expect(written('airports', { name: 'Aeroporto Humberto Delgado', iata: 'LIS' })).toBe('• Aeroporto Humberto Delgado');
+  });
+
+  it('cuts a very long name instead of filling the map with it', () => {
+    const long = 'Fundação Dona Anna de Sommer Champalimaud e Doutor Carlos Montez Champalimaud';
+    const text = written('landmarks-main', { name: long });
+    expect(text.endsWith('…')).toBe(true);
+    expect(text.length).toBeLessThanOrEqual(2 + 40);
+    expect(long.startsWith(text.slice(2, -1))).toBe(true);
+    // a name of ordinary length is left alone
+    expect(written('landmarks-main', { name: 'Museu Nacional de Arte Antiga' })).toBe('• Museu Nacional de Arte Antiga');
+  });
+
+  it('marks a summit with a triangle and its height', () => {
+    expect(written('summits', { name: 'Peninha', ele: 487 })).toBe('▲ Peninha  487 m');
+    expect(written('summits-main', { name: 'Cruz Alta', ele: 528 })).toBe('▲ Cruz Alta  528 m');
+    expect(written('summits', { name: 'Monge' })).toBe('▲ Monge');
+  });
+
+  it('names summits and passes, not cliffs, and zoomed out only the first of each area', () => {
+    for (const cls of ['peak', 'volcano', 'saddle']) expect(shows('summits', { class: cls, name: 'X', rank: 3 }), cls).toBe(true);
+    expect(shows('summits', { class: 'cliff', name: 'Pedreira', rank: 1 })).toBe(false);
+    expect(shows('summits-main', { class: 'peak', name: 'Peninha', rank: 1 })).toBe(true);
+    expect(shows('summits-main', { class: 'peak', name: 'Pedra Amarela', rank: 2 })).toBe(false);
+  });
+
+  it('writes the number of a road upright along it, by class of road', () => {
+    const ref = (cls, extra = {}) => ({ class: cls, ref: 'EN 6', ...extra });
+    expect(shows('road-refs-motorway', ref('motorway'))).toBe(true);
+    expect(shows('road-refs-motorway', ref('trunk'))).toBe(true);
+    expect(shows('road-refs-motorway', ref('primary'))).toBe(false);
+    expect(shows('road-refs-primary', ref('primary'))).toBe(true);
+    expect(shows('road-refs-secondary', ref('secondary'))).toBe(true);
+    expect(shows('road-refs-tertiary', ref('tertiary'))).toBe(true);
+    expect(shows('road-refs-tertiary', ref('minor'))).toBe(false);
+    // a road without a number, and the exit numbers of motorway junctions
+    expect(shows('road-refs-primary', { class: 'primary', name: 'Avenida de Brasília' })).toBe(false);
+    expect(shows('road-refs-motorway', ref('motorway', { subclass: 'junction', ref: '3' }))).toBe(false);
+    for (const id of added.slice(0, 4)) {
+      expect(layer(id).layout['symbol-placement'], id).toBe('line');
+      expect(layer(id).layout['text-rotation-alignment'], id).toBe('viewport');
+    }
+  });
+
+  it('writes one number for a road that has several', () => {
+    expect(written('road-refs-motorway', { ref: 'IC 17;A 36' })).toBe('IC 17');
+    expect(written('road-refs-motorway', { ref: 'PVG;IP 1' })).toBe('PVG');
+    expect(written('road-refs-primary', { ref: 'EN 247' })).toBe('EN 247');
+  });
+
+  it('names the airports with scheduled flights', () => {
+    expect(shows('airports', { name: 'Aeroporto Humberto Delgado', iata: 'LIS', class: 'international' })).toBe(true);
+    expect(shows('airports', { name: 'Aeródromo de Tires', class: 'other' })).toBe(false);
+  });
+
+  it('recolours the added names with the theme', () => {
+    const light = tintBaseStyle(base, 'light');
+    for (const id of added) {
+      const paint = light.layers.find((l) => l.id === id).paint;
+      expect(paint['text-color'], id).toBe(MAP_THEMES.light.landmark);
+      expect(paint['text-halo-color'], id).toBe(MAP_THEMES.light.land);
+    }
   });
 });

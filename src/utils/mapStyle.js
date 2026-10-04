@@ -11,11 +11,14 @@ const STYLE_CACHE_KEY = 'wind-basemap-v1';
 
 // Map colours per theme. `flow` is the ink used for the wind itself, as [r, g, b].
 // tail / neutral / head colour the route: blue pushes, red slows, grey barely matters.
+// label is for towns and villages; landmark (points of reference, road numbers) and roadName sit a step
+// behind it, so the names help finding a spot without competing with the wind.
 export const MAP_THEMES = {
   dark: {
     sea: '#0a1a27', land: '#172830', wood: '#18312c', urban: '#1e3039', building: '#25373f',
     roadMinor: '#2c3f49', roadMajor: '#3d5563', roadCasing: '#12222a', path: '#2c3f49', rail: '#33454e',
     boundary: '#3a4d58', label: '#a9bcc7', labelWater: '#4d6f88', cycle: '#86a8ba',
+    landmark: '#93a9b6', roadName: '#7b93a2',
     hillShadow: 'rgba(0,0,0,0.6)', hillHighlight: 'rgba(160,200,220,0.12)', hillAccent: 'rgba(0,0,0,0.4)',
     flow: [255, 255, 255], halo: '#0a1a27', casing: '#06121b',
     tail: '#3987e5', neutral: '#b4bec6', head: '#e66767',
@@ -24,6 +27,7 @@ export const MAP_THEMES = {
     sea: '#c9dce8', land: '#f1ede4', wood: '#dbe6d2', urban: '#e9e4d9', building: '#ddd6c9',
     roadMinor: '#ffffff', roadMajor: '#ffffff', roadCasing: '#cfc8ba', path: '#d9d2c4', rail: '#c2bbae',
     boundary: '#b9b1a3', label: '#3d4c58', labelWater: '#5f86a0', cycle: '#5c7a8c',
+    landmark: '#56666f', roadName: '#78858e',
     hillShadow: 'rgba(70,60,45,0.32)', hillHighlight: 'rgba(255,255,255,0.5)', hillAccent: 'rgba(70,60,45,0.2)',
     flow: [15, 34, 48], halo: '#f1ede4', casing: '#ffffff',
     tail: '#2a78d6', neutral: '#87919a', head: '#e34948',
@@ -97,8 +101,10 @@ export function fallbackStyle(themeName) {
   };
 }
 
+// Left out of the base style: its road shields and airport label come with icons drawn for a light map
+// (they are written as plain text further down instead), and one-way arrows are of no use here.
 // Country and region names stay: zoomed out, they are what tells one part of the world from another.
-const HIDDEN_LAYERS = /shield|oneway|highway.name|airport|ice|glacier/;
+const HIDDEN_LAYERS = /shield|oneway|airport|ice|glacier/;
 const keepProps = (paint, ...keys) => {
   const out = {};
   keys.forEach((k) => {
@@ -107,9 +113,111 @@ const keepProps = (paint, ...keys) => {
   return out;
 };
 
+// Points of reference worth a name on the map: the things a rider steers by or agrees to meet at.
+// Shops, cafés, bus stops and the like are left out; there are hundreds of them in every town.
+// The ones that stand out come first, at street level; the smaller ones wait for a closer look.
+// (Hospitals, stations and viewpoints are picked by subclass further down.)
+const MAIN_LANDMARKS = [
+  'monument', 'castle', 'ruins', 'fort', 'lighthouse', 'museum', 'stadium', 'zoo', 'theme_park', 'golf',
+  'cemetery', 'college', 'campsite', 'harbor', 'ferry_terminal', 'aerialway',
+];
+const LESSER_LANDMARKS = ['attraction', 'park', 'garden', 'place_of_worship', 'theatre', 'picnic_site', 'bicycle'];
+// The tiles rank what they hold by importance within each area: 1 is the first thing to name there.
+const LESSER_RANK_AT_15 = 25;
+// from this zoom on, the numbers of these classes of road
+const ROAD_REF_TIERS = [[10, ['motorway', 'trunk']], [11, ['primary']], [12, ['secondary']], [13, ['tertiary']]];
+// a name longer than this is cut, so one museum does not take five lines
+const LONGEST_NAME = 40;
+
+const fullName = ['coalesce', ['get', 'name:latin'], ['get', 'name']];
+const placeName = ['case', ['>', ['length', fullName], LONGEST_NAME], ['concat', ['slice', fullName, 0, LONGEST_NAME - 2], '…'], fullName];
+const classIn = (classes) => ['match', ['get', 'class'], classes, true, false];
+// "IC 17;A 36" is one road with two numbers: the first one is enough
+const firstRef = ['case', ['>=', ['index-of', ';', ['get', 'ref']], 0], ['slice', ['get', 'ref'], 0, ['index-of', ';', ['get', 'ref']]], ['get', 'ref']];
+
 /**
- * Recolours the base style for a theme, drops what a cyclist does not need (shields, road names,
- * airports) and adds hillshade plus dotted cycleways.
+ * The names added on top of the base style, as plain text marked with a bullet or a triangle (the base
+ * style's icons only suit a light map): road numbers, airports, summits with their height, and from
+ * street level the landmarks. They go in below the names of towns, which keep the first claim on the room.
+ */
+function referenceLayers(source, t) {
+  const paint = (color) => ({ 'text-color': color, 'text-halo-color': t.land, 'text-halo-width': 1.4 });
+  // the mark sits on the spot and the name runs to its right
+  const pointLabel = (mark, field) => ({
+    'text-field': ['concat', mark, ' ', field],
+    'text-font': ['Noto Sans Regular'],
+    'text-size': 11,
+    'text-anchor': 'left',
+    'text-justify': 'left',
+    'text-offset': [-0.4, 0],
+    'text-max-width': 9,
+    'symbol-sort-key': ['coalesce', ['get', 'rank'], 0],
+  });
+  const withHeight = ['concat', placeName, ['case', ['has', 'ele'], ['concat', '  ', ['to-string', ['get', 'ele']], ' m'], '']];
+  const summit = ['all', ['has', 'name'], classIn(['peak', 'volcano', 'saddle'])];
+  const subclassOf = (cls, subclasses) => ['all', ['==', ['get', 'class'], cls], ['match', ['get', 'subclass'], subclasses, true, false]];
+  const main = ['any',
+    classIn(MAIN_LANDMARKS),
+    subclassOf('hospital', ['hospital']),
+    subclassOf('railway', ['station', 'halt']),
+    subclassOf('attraction', ['viewpoint']),
+  ];
+  const lesser = ['all', classIn(LESSER_LANDMARKS), ['!', subclassOf('attraction', ['viewpoint'])]];
+  const landmarks = (id, minzoom, which) => ({
+    id,
+    type: 'symbol',
+    source,
+    'source-layer': 'poi',
+    minzoom,
+    filter: ['all', ['has', 'name'], which],
+    layout: pointLabel('•', placeName),
+    paint: paint(t.landmark),
+  });
+
+  return [
+    ...ROAD_REF_TIERS.map(([minzoom, classes]) => ({
+      id: `road-refs-${classes[0]}`,
+      type: 'symbol',
+      source,
+      'source-layer': 'transportation_name',
+      minzoom,
+      // motorway junctions carry their exit number as a ref
+      filter: ['all', ['has', 'ref'], ['!=', ['get', 'subclass'], 'junction'], classIn(classes)],
+      layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 320,
+        'text-field': firstRef,
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 10,
+        // upright like a road sign, not turned along the road
+        'text-rotation-alignment': 'viewport',
+      },
+      paint: paint(t.landmark),
+    })),
+    {
+      id: 'airports',
+      type: 'symbol',
+      source,
+      'source-layer': 'aerodrome_label',
+      minzoom: 10,
+      // the ones with scheduled flights; airfields and heliports would only be noise
+      filter: ['all', ['has', 'name'], ['has', 'iata']],
+      layout: pointLabel('•', placeName),
+      paint: paint(t.landmark),
+    },
+    // zoomed out only the first summit of each area, so the hills do not fill up with names
+    { id: 'summits-main', type: 'symbol', source, 'source-layer': 'mountain_peak', minzoom: 11, maxzoom: 13, filter: ['all', summit, ['<=', ['get', 'rank'], 1]], layout: pointLabel('▲', withHeight), paint: paint(t.landmark) },
+    { id: 'summits', type: 'symbol', source, 'source-layer': 'mountain_peak', minzoom: 13, filter: summit, layout: pointLabel('▲', withHeight), paint: paint(t.landmark) },
+    // the tiles only carry these from zoom 14
+    landmarks('landmarks-main', 14, main),
+    landmarks('landmarks-lesser', 15, ['all', lesser, ['<=', ['get', 'rank'], LESSER_RANK_AT_15]]),
+    landmarks('landmarks-rest', 16, ['all', lesser, ['>', ['get', 'rank'], LESSER_RANK_AT_15]]),
+  ];
+}
+
+/**
+ * Recolours the base style for a theme, drops what a cyclist does not need (icons, one-way arrows),
+ * and adds hillshade, dotted cycleways and the names of points of reference.
  */
 export function tintBaseStyle(baseStyle, themeName) {
   const t = MAP_THEMES[themeName];
@@ -142,13 +250,19 @@ export function tintBaseStyle(baseStyle, themeName) {
         l.paint = paint;
       } else if (l.type === 'symbol') {
         const water = sourceLayer === 'water_name' || sourceLayer === 'waterway';
+        const road = sourceLayer === 'transportation_name';
         l.paint = {
-          'text-color': water ? t.labelWater : t.label,
+          'text-color': water ? t.labelWater : road ? t.roadName : t.label,
           'text-halo-color': water ? t.sea : t.land,
           'text-halo-width': 1.3,
         };
         // villages and minor places only once you zoom in, so the wind numbers stay readable
         if (/village|other/.test(l.id)) l.minzoom = Math.max(l.minzoom || 0, 11.5);
+        // street names are for finding a spot once zoomed in: small, and the main roads from zoom 13
+        if (road) {
+          l.layout = { ...l.layout, 'text-size': 11 };
+          if (/major/.test(l.id)) l.minzoom = Math.max(l.minzoom || 0, 13);
+        }
       }
       return l;
     });
@@ -175,6 +289,11 @@ export function tintBaseStyle(baseStyle, themeName) {
       'hillshade-exaggeration': 0.55,
     },
   });
+
+  const firstPlace = style.layers.findIndex((l) => l.type === 'symbol' && l['source-layer'] === 'place');
+  style.layers.splice(firstPlace < 0 ? style.layers.length : firstPlace, 0, ...referenceLayers(vectorSource, t));
+  // nothing left draws an icon, so the base style's sprite is not downloaded
+  if (!style.layers.some((l) => l.layout?.['icon-image'] || l.paint?.['fill-pattern'] || l.paint?.['line-pattern'])) delete style.sprite;
 
   const firstLabel = style.layers.findIndex((l) => l.type === 'symbol');
   style.layers.splice(firstLabel < 0 ? style.layers.length : firstLabel, 0, {
