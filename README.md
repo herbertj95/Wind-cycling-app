@@ -104,6 +104,15 @@ npx cap open android
 
 Then build and run from Android Studio.
 
+To get the installable file without opening Android Studio, build it with Gradle after the sync. It needs Java 21; the one that comes with Android Studio does, so point `JAVA_HOME` at it (on Windows, `C:\Program Files\Android\Android Studio\jbr`):
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`: copy it to the phone and open it there to install it.
+
 ---
 
 ## 🧭 How to use
