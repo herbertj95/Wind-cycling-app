@@ -1,1277 +1,933 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Bicycle,
-  MapTrifold,
-  Gauge,
-  CloudSun,
-  Wind,
-  ShieldCheck,
-  Warning,
-  ArrowRight,
-  WaveTriangle,
-  Crosshair
-} from '@phosphor-icons/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Crosshair, MagnifyingGlass, Moon, Path, Sun, Wind } from '@phosphor-icons/react';
 import WindMap from './components/WindMap';
-import RideHUD from './components/RideHUD';
-import SpotShortcuts from './components/SpotShortcuts';
-import GpxUploader from './components/GpxUploader';
-import { fetchLisbonGridWeather, MICROCLIMATE_SPOTS } from './utils/weatherApi';
-import { calculateDistance, classifyWindEffect } from './utils/gpxParser';
-import { getInterpolatedWeather } from './utils/weatherApi';
+import WindReadout from './components/WindReadout';
+import TimeBar from './components/TimeBar';
+import RoutePanel from './components/RoutePanel';
+import RoutesMenu from './components/RoutesMenu';
+import PlacesMenu from './components/PlacesMenu';
+import { useWind, useNow } from './hooks/useWind';
+import { useSystemBars } from './hooks/useSystemBars';
+import { STALE_MS } from './utils/windStore';
+import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds } from './utils/lattice';
+import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
+import { analyseRoute } from './utils/routeAnalysis';
+import { parseGpxData } from './utils/gpxParser';
+import { CALM_KMH } from './utils/wind';
+import { MAP_THEMES, effectColor, routeGradient } from './utils/mapStyle';
+import { DEVICE_ZONE, formatClock, formatDayClock, hourStart, validZone, zoneLabel } from './utils/time';
+import './App.css';
 
-// Forecast intervals in hours
-const FORECAST_STEPS = [0, 1, 2, 3, 24];
+const HOUR = 3600;
+// Hours of forecast shown on the time bar, relative to now
+const HOURS_BACK = 2;
+const HOURS_AHEAD = 45;
+
+const THEME_KEY = 'wind-theme';
+const VIEW_KEY = 'wind-view-v1';
+const FOCUS_KEY = 'wind-focus-v1';
+const FOLDED_KEY = 'wind-folded-v1';
+const NARROW_SCREEN = 720;
+// ms between rider steps at 1x: a 600-point route plays in a little over a minute
+const RIDE_TICK_MS = 120;
+// "Locate me" asks for a precise fix; the quiet look-up on start takes whatever is quick
+const GEO_PRECISE = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
+const GEO_QUICK = { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 };
+const GEO_TIMEOUT = 3;
+const PLACES_MENU_ID = 'places-menu';
+const ROUTES_MENU_ID = 'routes-menu';
+
+// Forecast points asked for at once: across the map view, along a route, and around the saved places in view.
+// Each one counts against the free allowance of the forecast service, so the view takes a coarser lattice
+// when zoomed out instead of more points.
+const VIEW_MAX_POINTS = 120;
+const ROUTE_MAX_POINTS = 64;
+const PLACES_WITH_WIND = 12;
+// The wind for a view is asked for once the map has been still this long, so passing through downloads nothing
+const VIEW_SETTLE_MS = 350;
+// On start the map waits this long for a quick position fix before asking for the wind of the view it opened on
+const START_HOLD_MS = 1200;
+// A reading for one place only comes from forecast points at most 0.125° apart, never from the coarser ones
+// of a zoomed-out view
+const POINT = { maxLevel: 0 };
+
+function initialTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'dark' || saved === 'light') return saved;
+  } catch {
+    // storage unavailable: fall through to the system setting
+  }
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+// where the map was left, or null the first time (it then opens on the default places)
+function initialView() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIEW_KEY));
+    if (saved && [saved.lat, saved.lng, saved.zoom].every(Number.isFinite) && Math.abs(saved.lat) <= 85) {
+      return { lat: saved.lat, lng: saved.lng, zoom: saved.zoom };
+    }
+  } catch {
+    // nothing usable saved
+  }
+  return null;
+}
+
+// what the readout was showing when the app was last used, if it is still there; otherwise the first place
+function initialFocus(places) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOCUS_KEY));
+    if (saved?.type === 'place' && places.some((p) => p.id === saved.id)) return { type: 'place', id: saved.id };
+    if (saved?.type === 'pin' && Number.isFinite(saved.lat) && Number.isFinite(saved.lng)) {
+      return {
+        type: 'pin',
+        lat: saved.lat,
+        lng: saved.lng,
+        name: typeof saved.name === 'string' ? saved.name : null,
+        region: typeof saved.region === 'string' ? saved.region : null,
+        zone: validZone(saved.zone),
+      };
+    }
+  } catch {
+    // nothing usable saved
+  }
+  return { type: 'place', id: places[0]?.id };
+}
+
+// which panels of the dock were left folded away, to give the map more room
+function initialFolded() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FOLDED_KEY));
+    return { time: saved?.time === true, route: saved?.route === true };
+  } catch {
+    return { time: false, route: false };
+  }
+}
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+// the focus moves to the rider and remembers what it was on, to go back to when the route is closed
+const toRider = (prev) => (prev.type === 'rider' ? prev : { type: 'rider', back: prev });
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('map'); // 'map' or 'hud'
-  const [gridWeather, setGridWeather] = useState([]);
-  const [activeRoute, setActiveRoute] = useState(null);
-  const [selectedSpot, setSelectedSpot] = useState(MICROCLIMATE_SPOTS[0]);
+  const { store, wind } = useWind();
+  const now = useNow();
+  const nowSec = now / 1000;
 
-  // State for simulated rider HUD position
-  const [simulatedState, setSimulatedState] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [theme, setTheme] = useState(initialTheme);
+  const [flowEnabled, setFlowEnabled] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  // null follows the clock; otherwise the unix time (s) of the chosen forecast hour
+  const [selectedTime, setSelectedTime] = useState(null);
+  const [forecastPlaying, setForecastPlaying] = useState(false);
+
+  const [places, setPlaces] = useState(loadPlaces);
+  // What the readout describes: a saved place, a pinned point (tapped or found by search),
+  // the rider on the route, or the user's position
+  const [focus, setFocus] = useState(() => initialFocus(places));
+  const [user, setUser] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
-  const [forecastOffset, setForecastOffset] = useState(0);
 
-  // Fetch weather when forecast offset changes
+  const [route, setRoute] = useState(null);
+  const [riderIdx, setRiderIdx] = useState(0);
+  const [ridePlaying, setRidePlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [rideKmh, setRideKmh] = useState(25);
+
+  // which toolbar menu is open: 'places', 'routes' or null
+  const [menu, setMenu] = useState(null);
+  const [routeError, setRouteError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  // the time bar and the route details can each be folded down to one line
+  const [folded, setFolded] = useState(initialFolded);
+
+  // what the map shows once it has come to rest: { bounds, center, zoom }
+  const [view, setView] = useState(null);
+  const [mapMoving, setMapMoving] = useState(false);
+  // false while the start-up position fix may still move the map somewhere else
+  const [viewReady, setViewReady] = useState(() => !navigator.geolocation);
+
+  const mapRef = useRef(null);
+  const readoutRef = useRef(null);
+  const dockRef = useRef(null);
+  const toolbarRef = useRef(null);
+  const placesButtonRef = useRef(null);
+  const routesButtonRef = useRef(null);
+  const [startView] = useState(initialView);
+  // true once the user (or a successful start-up GPS fix) has decided what the map shows
+  const viewClaimed = useRef(false);
+  const loadId = useRef(0);
+  const riderIdxRef = useRef(0);
+  // counts the times the rider was placed by hand or by opening a route, see the playback below
+  const rideRun = useRef(0);
+  const placesRef = useRef(places);
+  const viewAsked = useRef(false);
+
+  const notify = useCallback((text, action = null) => setNotice({ text, action, id: Date.now() }), []);
+
+  const updatePlaces = useCallback((next) => {
+    placesRef.current = next;
+    setPlaces(next);
+    savePlaces(next);
+  }, []);
+
+  // Places saved or removed in another window of the app are taken over here. Without this, the next
+  // change made in this window would write its older list over them.
   useEffect(() => {
-    async function loadWeather() {
-      setIsLoading(true);
-      const data = await fetchLisbonGridWeather('live', forecastOffset);
-      setGridWeather(data);
-      setIsLoading(false);
+    const onStorage = (e) => {
+      if (e.key !== PLACES_KEY) return;
+      const latest = loadPlaces();
+      placesRef.current = latest;
+      setPlaces(latest);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // ----- focus -----
+  const riderPoint = route ? route.points[Math.min(riderIdx, route.points.length - 1)] : null;
+  const followingRider = focus.type === 'rider' && route !== null;
+
+  const focusPlace = useMemo(() => {
+    if (focus.type === 'rider' && riderPoint) {
+      const km = riderPoint.distance.toFixed(1);
+      return { lat: riderPoint.lat, lng: riderPoint.lng, title: `${route.name}, km ${km}`, place: `km ${km}` };
     }
-    loadWeather();
-  }, [forecastOffset]);
+    if (focus.type === 'pin') {
+      const coordinates = `${focus.lat.toFixed(3)}, ${focus.lng.toFixed(3)}`;
+      return {
+        lat: focus.lat,
+        lng: focus.lng,
+        title: focus.name ?? 'Pinned point',
+        place: focus.name ?? 'the pinned point',
+        note: focus.name ? focus.region || coordinates : coordinates,
+        zone: focus.zone,
+      };
+    }
+    if (focus.type === 'me' && user) {
+      return { lat: user.lat, lng: user.lng, title: 'My location', place: 'your location', note: 'Your GPS position.', zone: DEVICE_ZONE };
+    }
+    const place = places.find((p) => p.id === focus.id) ?? places[0];
+    if (!place) return null;
+    return { id: place.id, lat: place.lat, lng: place.lng, title: place.name, place: place.label || place.name, note: place.desc || place.region, zone: place.zone };
+  }, [focus, riderPoint, route, user, places]);
+  const focusedPlaceId = focusPlace?.id ?? null;
 
-  // Attempt to locate user automatically on mount
+  // The time bar describes one fixed place. While following the rider that place is the start of the
+  // route, so the bars answer "when should I leave" and do not change with every step of the ride.
+  // With nothing in focus they describe the middle of the map.
+  const barsSpot = followingRider ? route.points[0] : focusPlace;
+  const barsLat = barsSpot?.lat ?? view?.center.lat ?? null;
+  const barsLng = barsSpot?.lng ?? view?.center.lng ?? null;
+  const barsPlace = followingRider ? 'the start' : focusPlace ? focusPlace.place : 'the centre of the map';
+  const barsOptions = barsSpot ? POINT : undefined;
+
+  // Times are shown in the local time of that place: the zone it is known to be in, or the zone of the
+  // nearest forecast point, or (until one is loaded) the device's own.
+  const knownZone = followingRider ? null : validZone(focusPlace?.zone);
+  const zone = useMemo(() => {
+    if (knownZone) return knownZone;
+    return (barsLat !== null && validZone(wind.zoneAt(barsLat, barsLng))) || DEVICE_ZONE;
+  }, [knownZone, wind, barsLat, barsLng]);
+
+  // ----- time -----
+  // the hour in progress, as that place's clock counts hours
+  const hourBase = hourStart(nowSec, zone);
+  const firstHour = hourBase - HOURS_BACK * HOUR;
+  const lastHour = hourBase + HOURS_AHEAD * HOUR;
+
+  // When the clock catches up with an hour that was picked in advance, go back to following the clock.
+  const [seenHour, setSeenHour] = useState(hourBase);
+  if (hourBase !== seenHour) {
+    setSeenHour(hourBase);
+    if (selectedTime !== null && selectedTime <= hourBase) setSelectedTime(null);
+  }
+
+  const followingNow = selectedTime === null;
+  // the chosen hour as one of the bars
+  const selectedHour = followingNow
+    ? hourBase
+    : clamp(hourBase + Math.round((selectedTime - hourBase) / HOUR) * HOUR, firstHour, lastHour);
+  // The moment the map shows, in unix seconds. "Now" is the current minute, read between the two forecast
+  // hours around it, not the last full hour.
+  const shownTime = followingNow ? Math.floor(nowSec) : selectedHour;
+
+  const selectHour = useCallback((time) => setSelectedTime(time === hourBase ? null : time), [hourBase]);
+
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          setSelectedSpot({
-            id: 'user_location',
-            name: 'My Location',
-            lat: lat,
-            lng: lng,
-            timestamp: Date.now(),
-            isSheltered: false,
-            rimWarning: false,
-            desc: 'Your current GPS location.'
-          });
-        },
-        (error) => {
-          console.warn("Could not auto-locate on mount, falling back to default.", error);
+    if (!forecastPlaying) return undefined;
+    const timer = setInterval(() => {
+      setSelectedTime((prev) => {
+        const current = prev === null ? hourBase : prev;
+        const next = current >= lastHour ? hourBase : current + HOUR;
+        return next === hourBase ? null : next;
+      });
+    }, 650);
+    return () => clearInterval(timer);
+  }, [forecastPlaying, hourBase, lastHour]);
+
+  // ----- wind -----
+  const frame = useMemo(() => wind.frame(shownTime), [wind, shownTime]);
+
+  const routeNodes = useMemo(() => (route ? nodesAlong(route.points, ROUTE_MAX_POINTS) : []), [route]);
+  const routeLevel = routeNodes.length > 0 ? routeNodes[0].level : 0;
+  const analysis = useMemo(() => {
+    if (!route) return null;
+    // the rider is somewhere else at every moment, so each point of the route is read at its own time
+    const forecast = { sample: (lat, lng, hour) => wind.sample(lat, lng, hour * HOUR, { maxLevel: routeLevel, late: true }) };
+    return analyseRoute(route, forecast, shownTime / HOUR, rideKmh);
+  }, [route, routeLevel, wind, shownTime, rideKmh]);
+  // a route with no forecast for most of its length has no wind to colour it with
+  const routeHasWind = analysis !== null && analysis.outsideKm < route.totalDistance * 0.5;
+  const routeState = wind.state(routeNodes);
+
+  const routeStops = useMemo(() => {
+    if (!route || !analysis || !routeHasWind) return null;
+    return routeGradient(route, analysis.wind.map((w) => w.head), theme);
+  }, [route, analysis, routeHasWind, theme]);
+
+  const riderWind = analysis ? analysis.wind[Math.min(riderIdx, analysis.wind.length - 1)] : null;
+  const onRoute = focus.type === 'rider' && riderPoint !== null && riderWind !== null;
+
+  const focusNodes = useMemo(() => (barsSpot ? nodesAround(0, barsSpot.lat, barsSpot.lng) : []), [barsSpot]);
+
+  const reading = useMemo(() => {
+    if (onRoute) return riderWind.outside ? null : riderWind;
+    return focusPlace ? wind.sample(focusPlace.lat, focusPlace.lng, shownTime, POINT) : null;
+  }, [onRoute, riderWind, focusPlace, wind, shownTime]);
+
+  // when the forecast behind the reading was downloaded
+  const readingAge = useMemo(() => {
+    if (!reading) return null;
+    if (!onRoute) return reading.fetchedAt;
+    return wind.sample(riderPoint.lat, riderPoint.lng, shownTime, { maxLevel: routeLevel, late: true })?.fetchedAt ?? null;
+  }, [reading, onRoute, riderPoint, wind, shownTime, routeLevel]);
+
+  const focusState = onRoute ? routeState : wind.state(focusNodes);
+  const status = !focusPlace ? 'empty' : reading ? 'ready' : focusState === 'loading' ? 'loading' : focusState === 'failed' ? 'error' : 'none';
+  const problem = wind.problem?.kind ?? null;
+  // an old forecast that could not be renewed is still shown, and the readout says how old it is
+  const readingStale = problem !== null && readingAge !== null && now - readingAge > STALE_MS;
+
+  const riderInfo = useMemo(() => {
+    if (!riderPoint || !riderWind) return null;
+    return {
+      lat: riderPoint.lat,
+      lng: riderPoint.lng,
+      bearing: riderPoint.bearing,
+      // still air has no direction to draw
+      from: routeHasWind && !riderWind.outside && riderWind.speed >= CALM_KMH ? riderWind.from : null,
+      head: riderWind.head,
+      cross: riderWind.cross,
+      color: effectColor(riderWind.head, theme),
+    };
+  }, [riderPoint, riderWind, routeHasWind, theme]);
+
+  // the time shown next to the place: for the rider, when they get to that point
+  const whenLabel = useMemo(() => {
+    // a clock that is not the reader's own says which one it is
+    const stamp = (time) => {
+      const offset = zoneLabel(time, zone);
+      return `${formatDayClock(time, zone)}${offset && ` ${offset}`}`;
+    };
+    if (!onRoute) return stamp(shownTime);
+    const arrival = stamp(shownTime + (riderPoint.distance / rideKmh) * HOUR);
+    return riderPoint.distance < 0.05 ? `leaving ${arrival}` : `arriving ${arrival}`;
+  }, [shownTime, zone, onRoute, riderPoint, rideKmh]);
+
+  const spots = useMemo(() => places.map((place) => {
+    const here = wind.sample(place.lat, place.lng, shownTime, POINT);
+    return {
+      id: place.id,
+      label: place.label || place.name,
+      lat: place.lat,
+      lng: place.lng,
+      anchor: place.anchor,
+      speed: here?.speed,
+      from: here?.from,
+      selected: place.id === focusedPlaceId,
+    };
+  }), [places, wind, shownTime, focusedPlaceId]);
+
+  const pin = useMemo(() => (focus.type === 'pin' ? { lat: focus.lat, lng: focus.lng } : null), [focus]);
+
+  const series = useMemo(() => {
+    const hours = [];
+    for (let time = firstHour; time <= lastHour; time += HOUR) {
+      const here = barsLat === null ? null : wind.sample(barsLat, barsLng, time, barsOptions);
+      hours.push({ time, speed: here ? here.speed : null, gust: here ? here.gust : null });
+    }
+    return hours;
+  }, [wind, firstHour, lastHour, barsLat, barsLng, barsOptions]);
+  const nowReading = followingNow && barsLat !== null ? wind.sample(barsLat, barsLng, shownTime, barsOptions) : null;
+
+  // ----- what the store is asked to download -----
+  useEffect(() => {
+    store.want('focus', focusNodes);
+  }, [store, focusNodes]);
+
+  useEffect(() => {
+    store.want('route', routeNodes);
+  }, [store, routeNodes]);
+
+  // The map view only counts once it has stopped moving. It is covered by the finest lattice that does
+  // not take more points than the allowance for a view.
+  const settledView = viewReady && !mapMoving ? view : null;
+  const viewNodes = useMemo(() => {
+    if (!settledView) return [];
+    return nodesInBounds(levelForBounds(settledView.bounds, VIEW_MAX_POINTS), settledView.bounds);
+  }, [settledView]);
+  // the labels of the saved places in view carry their own wind, read as closely as a place in focus
+  const placeNodes = useMemo(() => {
+    if (!settledView) return [];
+    const inView = places.filter((p) => inBounds(settledView.bounds, p.lat, p.lng)).slice(0, PLACES_WITH_WIND);
+    return inView.flatMap((p) => nodesAround(0, p.lat, p.lng));
+  }, [settledView, places]);
+
+  // the view the app opens on is asked for at once; later ones once the map has settled
+  useEffect(() => {
+    const delay = viewAsked.current ? VIEW_SETTLE_MS : 0;
+    store.want('view', viewNodes, delay);
+    store.want('places', placeNodes, delay);
+    if (viewNodes.length > 0) viewAsked.current = true;
+  }, [store, viewNodes, placeNodes]);
+
+  // how far the wind for the part of the map on screen is: 'ready' | 'loading' | 'failed'
+  const viewState = wind.state(viewNodes);
+
+  // ----- menus -----
+  const closeMenu = useCallback((returnTo = null) => {
+    setMenu(null);
+    returnTo?.current?.focus();
+  }, []);
+
+  const toggleMenu = (name) => {
+    if (menu !== name && name === 'routes') setRouteError(null);
+    setMenu(menu === name ? null : name);
+  };
+
+  useEffect(() => {
+    if (!menu) return undefined;
+    const button = menu === 'places' ? placesButtonRef : routesButtonRef;
+    const onKey = (e) => e.key === 'Escape' && closeMenu(button);
+    // a tap on any panel closes the menu; a tap on the map is handled in handlePick so it does not also drop a pin
+    const onPointerDown = (e) => {
+      if (!e.target.closest('.toolbar-menu') && !e.target.closest('.wind-map')) closeMenu();
+    };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [menu, closeMenu]);
+
+  // ----- places -----
+  const showPlace = (place, returnTo = null) => {
+    viewClaimed.current = true;
+    closeMenu(returnTo);
+    setFocus({ type: 'place', id: place.id });
+    mapRef.current?.focusOn(place.lat, place.lng, 11);
+  };
+
+  // a search result is a pinned point with a name, which can then be saved as a place
+  const showResult = (result) => {
+    viewClaimed.current = true;
+    closeMenu(placesButtonRef);
+    setFocus({
+      type: 'pin',
+      lat: result.lat,
+      lng: result.lng,
+      name: result.name ?? null,
+      region: result.region || null,
+      zone: validZone(result.zone),
+    });
+    mapRef.current?.focusOn(result.lat, result.lng, 11);
+  };
+
+  const saveFocus = (name) => {
+    if (!focusPlace) return;
+    const place = makePlace(name, focusPlace.lat, focusPlace.lng, {
+      region: focus.type === 'pin' ? focus.region : null,
+      zone: validZone(focusPlace.zone),
+    });
+    updatePlaces([...placesRef.current, place]);
+    setFocus({ type: 'place', id: place.id });
+  };
+
+  const removeFocus = () => {
+    const current = placesRef.current;
+    const index = current.findIndex((p) => p.id === focusedPlaceId);
+    if (index < 0) return;
+    const place = current[index];
+    updatePlaces(current.filter((p) => p !== place));
+    // the point stays in focus as a pin, so the map and the readout do not jump somewhere else
+    setFocus({ type: 'pin', lat: place.lat, lng: place.lng, name: place.name, region: place.region ?? null, zone: validZone(place.zone) });
+    notify(`Removed ${place.name} from your places.`, {
+      label: 'Undo',
+      run: () => {
+        const latest = placesRef.current;
+        if (!latest.some((p) => p.id === place.id)) {
+          const restored = [...latest];
+          restored.splice(Math.min(index, restored.length), 0, place);
+          updatePlaces(restored);
         }
-      );
+        setFocus({ type: 'place', id: place.id });
+        setNotice(null);
+      },
+    });
+  };
+
+  // ----- route -----
+  const openRoute = useCallback((parsed) => {
+    viewClaimed.current = true;
+    rideRun.current++;
+    setRoute(parsed);
+    setRiderIdx(0);
+    setRidePlaying(false);
+    setFocus(toRider);
+    setRouteError(null);
+    closeMenu(routesButtonRef);
+  }, [closeMenu]);
+
+  const loadPreset = useCallback(async (preset) => {
+    // only the route asked for last is opened, however the downloads happen to finish
+    const id = ++loadId.current;
+    try {
+      const response = await fetch(`${import.meta.env.BASE_URL}routes/${preset.filename}`);
+      if (!response.ok) throw new Error(`Could not load ${preset.name}.`);
+      const parsed = parseGpxData(await response.text(), preset.name);
+      parsed.id = preset.id;
+      if (id === loadId.current) openRoute(parsed);
+    } catch (err) {
+      if (id !== loadId.current) return;
+      setRouteError(err instanceof TypeError ? `Could not load ${preset.name}. Check your connection.` : err.message);
+    }
+  }, [openRoute]);
+
+  const loadFile = useCallback(async (file) => {
+    const id = ++loadId.current;
+    if (!/\.gpx$/i.test(file.name)) {
+      setRouteError('Only .gpx files can be opened.');
+      setMenu('routes');
+      return;
+    }
+    try {
+      const parsed = parseGpxData(await file.text(), file.name.replace(/\.gpx$/i, '').replace(/[_-]+/g, ' ').trim());
+      if (id === loadId.current) openRoute(parsed);
+    } catch (err) {
+      if (id !== loadId.current) return;
+      setRouteError(err.message || 'Could not read this GPX file.');
+      setMenu('routes');
+    }
+  }, [openRoute]);
+
+  const clearRoute = () => {
+    rideRun.current++;
+    setRoute(null);
+    setRidePlaying(false);
+    if (focus.type !== 'rider') return;
+    // the readout goes back to what it was on before the route
+    const back = focus.back ?? { type: 'place', id: places[0]?.id };
+    setFocus(back);
+    const target = back.type === 'pin' ? back : back.type === 'me' ? user : places.find((p) => p.id === back.id) ?? places[0];
+    // nothing to do when it is on the map already (which cannot be told while the map is still on its way somewhere)
+    if (!target || (view && !mapMoving && inBounds(view.bounds, target.lat, target.lng))) return;
+    // it is somewhere else: wait a frame, so the route panel is gone before the map measures the room it has
+    requestAnimationFrame(() => mapRef.current?.focusOn(target.lat, target.lng, 10));
+  };
+
+  const lastRoutePoint = route ? route.points.length - 1 : 0;
+  const isRiding = ridePlaying && route !== null && riderIdx < lastRoutePoint;
+
+  useEffect(() => {
+    riderIdxRef.current = riderIdx;
+  }, [riderIdx]);
+
+  // moving along the profile by hand always takes over from the playback
+  const scrubRoute = useCallback((index) => {
+    rideRun.current++;
+    setRidePlaying(false);
+    setRiderIdx(index);
+    setFocus(toRider);
+  }, []);
+
+  const toggleRide = () => {
+    rideRun.current++;
+    if (isRiding) {
+      setRidePlaying(false);
+      return;
+    }
+    if (riderIdx >= lastRoutePoint) setRiderIdx(0);
+    setFocus(toRider);
+    setRidePlaying(true);
+  };
+
+  useEffect(() => {
+    if (!isRiding) return undefined;
+    const run = rideRun.current;
+    const timer = setInterval(() => {
+      // The rider was put somewhere else (a tap on the profile, another route) and this timer has not
+      // been cleared yet: one more step from here would move them off that spot.
+      if (run !== rideRun.current) return;
+      const next = Math.min(lastRoutePoint, riderIdxRef.current + 1);
+      riderIdxRef.current = next;
+      setRiderIdx(next);
+      if (next >= lastRoutePoint) setRidePlaying(false);
+    }, Math.max(20, RIDE_TICK_MS / playbackRate));
+    return () => clearInterval(timer);
+  }, [isRiding, lastRoutePoint, playbackRate]);
+
+  // a GPX file dropped anywhere on the window opens as a route
+  useEffect(() => {
+    const allow = (e) => e.preventDefault();
+    const drop = (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (file) loadFile(file);
+    };
+    window.addEventListener('dragover', allow);
+    window.addEventListener('drop', drop);
+    return () => {
+      window.removeEventListener('dragover', allow);
+      window.removeEventListener('drop', drop);
+    };
+  }, [loadFile]);
+
+  // ----- location -----
+  const showPosition = useCallback((lat, lng, onStart) => {
+    setUser({ lat, lng });
+    // a slow start-up fix must not pull the map away from what the user has opened meanwhile
+    if (onStart && viewClaimed.current) return;
+    viewClaimed.current = true;
+    setFocus({ type: 'me' });
+    mapRef.current?.focusOn(lat, lng, 13);
+  }, []);
+
+  const locate = () => {
+    if (!navigator.geolocation) {
+      notify('This device does not share its location.');
+      return;
+    }
+    viewClaimed.current = true;
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setIsLocating(false);
+        showPosition(position.coords.latitude, position.coords.longitude, false);
+      },
+      (error) => {
+        setIsLocating(false);
+        notify(error.code === GEO_TIMEOUT
+          ? 'Still looking for your position. Try again in a moment.'
+          : 'Could not get your location. Check that location is switched on.');
+      },
+      GEO_PRECISE,
+    );
+  };
+
+  // Try once on start, quietly: if it works the map opens on the rider. The wind for the opening view
+  // waits a moment for that answer, so it is not downloaded for a place the map is about to leave.
+  useEffect(() => {
+    if (!navigator.geolocation) return undefined;
+    const release = () => setViewReady(true);
+    const timer = setTimeout(release, START_HOLD_MS);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        showPosition(position.coords.latitude, position.coords.longitude, true);
+        release();
+      },
+      release,
+      GEO_QUICK,
+    );
+    return () => clearTimeout(timer);
+  }, [showPosition]);
+
+  // ----- map callbacks -----
+  const handlePick = useCallback((lat, lng) => {
+    if (menu) {
+      // tapping the map with a menu open only closes the menu
+      closeMenu();
+      return;
+    }
+    viewClaimed.current = true;
+    setFocus({ type: 'pin', lat, lng, name: null, region: null, zone: null });
+  }, [menu, closeMenu]);
+
+  const handleSpot = (id) => {
+    const place = places.find((p) => p.id === id);
+    if (place) showPlace(place);
+  };
+
+  // once the map has been moved by hand, a late GPS fix does not move it again
+  const handleUserMove = useCallback(() => {
+    viewClaimed.current = true;
+  }, []);
+
+  const handleMoveStart = useCallback(() => setMapMoving(true), []);
+
+  const handleViewChange = useCallback((next) => {
+    setView(next);
+    setMapMoving(false);
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify({ lat: next.center.lat, lng: next.center.lng, zoom: next.zoom }));
+    } catch {
+      // the view just will not be remembered
     }
   }, []);
 
-  // Set default simulated state when activeRoute changes
+  // room the floating panels take, so the map fits things into what is left
+  const getPadding = useCallback(() => {
+    const readout = readoutRef.current;
+    const dockHeight = dockRef.current?.offsetHeight ?? 0;
+    if (window.innerWidth <= NARROW_SCREEN) {
+      return { top: (readout?.offsetHeight ?? 0) + 28, bottom: dockHeight + 76, left: 18, right: 18 };
+    }
+    return { top: 28, bottom: dockHeight + 36, left: (readout?.offsetWidth ?? 0) + 40, right: 60 };
+  }, []);
+
+  // where the floating panels are, so the map draws no wind arrow half under one of them
+  const getCovered = useCallback(
+    () => [readoutRef, toolbarRef, dockRef].map((panel) => panel.current?.getBoundingClientRect()).filter(Boolean),
+    [],
+  );
+
+  // ----- page-level effects -----
   useEffect(() => {
-    if (activeRoute && activeRoute.points.length > 0) {
-      const pt = activeRoute.points[0];
-      setSimulatedState({
-        index: 0,
-        lat: pt.lat,
-        lng: pt.lng,
-        bearing: pt.bearing,
-        ele: pt.ele,
-        distance: pt.distance
-      });
-    } else {
-      setSimulatedState(null);
+    const root = document.documentElement;
+    root.dataset.theme = theme;
+    root.style.setProperty('--tail', MAP_THEMES[theme].tail);
+    root.style.setProperty('--head', MAP_THEMES[theme].head);
+    root.style.setProperty('--cross', MAP_THEMES[theme].neutral);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', MAP_THEMES[theme].sea);
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // the choice just will not be remembered
     }
-  }, [activeRoute]);
+  }, [theme]);
 
-  const handleRouteLoaded = (route) => {
-    setActiveRoute(route);
-    setSelectedSpot(null);
-  };
+  // on a phone, the clock and the icons of the status bar are drawn to be read on the map shown
+  useSystemBars(theme);
 
-  const handleClearRoute = () => {
-    setActiveRoute(null);
-    setSimulatedState(null);
-  };
-
-  const handleSelectSpot = (spot) => {
-    setSelectedSpot({ ...spot, timestamp: Date.now() });
-  };
-
-  // Helper: Get weather specifically at a spot
-  const getSpotWeather = (spot) => {
-    return getInterpolatedWeather(spot.lat, spot.lng, gridWeather);
-  };
-
-  const handleLocateMe = () => {
-    if (navigator.geolocation) {
-      setIsLocating(true);
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          const userSpot = {
-            id: 'user_location',
-            name: 'My Location',
-            lat: lat,
-            lng: lng,
-            timestamp: Date.now(),
-            isSheltered: false,
-            rimWarning: false,
-            desc: 'Your current GPS location.'
-          };
-          setSelectedSpot(userSpot);
-          setActiveRoute(null);
-          setSimulatedState(null);
-          setActiveTab('map');
-          setIsLocating(false);
-        },
-        (error) => {
-          console.error("Error getting location", error);
-          alert("Could not get your location. Please check if GPS is enabled.");
-          setIsLocating(false);
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
-    } else {
-      alert("Geolocation is not supported by this browser.");
+  // the place or point in focus is where the readout starts next time
+  useEffect(() => {
+    if (focus.type !== 'place' && focus.type !== 'pin') return;
+    try {
+      localStorage.setItem(FOCUS_KEY, JSON.stringify(focus));
+    } catch {
+      // it just will not be remembered
     }
+  }, [focus]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOLDED_KEY, JSON.stringify(folded));
+    } catch {
+      // it just will not be remembered
+    }
+  }, [folded]);
+
+  // map controls sit above the dock, whatever its height
+  useEffect(() => {
+    const dock = dockRef.current;
+    const observer = new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--dock-h', `${dock.offsetHeight}px`);
+    });
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(null), notice.action ? 9000 : 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const colors = MAP_THEMES[theme];
+  // the place in focus can be saved, or removed if it already is one; the rider on a route is neither
+  const savable = followingRider || !focusPlace ? null : {
+    key: focusedPlaceId ? `place:${focusedPlaceId}` : focus.type === 'pin' ? `pin:${focus.lat},${focus.lng}` : 'me',
+    saved: focusedPlaceId !== null,
+    name: focus.type === 'pin' ? focus.name : null,
   };
-
-  // Analyze segments of active route
-  const analyzeRoute = () => {
-    if (!activeRoute || !activeRoute.points || activeRoute.points.length === 0) return null;
-
-    let headwind = 0;
-    let tailwind = 0;
-    let crosswind = 0;
-
-    let totalWindSpeed = 0;
-    let maxWind = 0;
-
-    const elevations = activeRoute.points.map(p => p.ele || 0);
-    const maxEle = Math.max(...elevations);
-    const minEle = Math.min(...elevations);
-
-    for (let i = 1; i < activeRoute.points.length; i++) {
-      const pt = activeRoute.points[i];
-      const prev = activeRoute.points[i - 1];
-      const stepDist = calculateDistance(prev.lat, prev.lng, pt.lat, pt.lng);
-
-      const weather = getInterpolatedWeather(pt.lat, pt.lng, gridWeather);
-      const effect = classifyWindEffect(pt.bearing, weather.windDir);
-
-      if (effect === 'headwind') headwind += stepDist;
-      else if (effect === 'tailwind') tailwind += stepDist;
-      else crosswind += stepDist;
-
-      totalWindSpeed += weather.windSpeed;
-      if (weather.windSpeed > maxWind) {
-        maxWind = weather.windSpeed;
-      }
-    }
-
-    const total = headwind + tailwind + crosswind;
-    const avgWind = parseFloat((totalWindSpeed / Math.max(1, activeRoute.points.length - 1)).toFixed(1));
-
-    // Downsample points to exactly 30 for drawing the elevation profile
-    const downsampledCount = 30;
-    const step = Math.max(1, Math.floor(activeRoute.points.length / downsampledCount));
-    const profilePoints = [];
-
-    for (let i = 0; i < activeRoute.points.length; i += step) {
-      const pt = activeRoute.points[i];
-      const weather = getInterpolatedWeather(pt.lat, pt.lng, gridWeather);
-      const effect = classifyWindEffect(pt.bearing, weather.windDir);
-      profilePoints.push({
-        distance: pt.distance,
-        ele: pt.ele || 0,
-        windEffect: effect,
-        windSpeed: weather.windSpeed
-      });
-      if (profilePoints.length >= downsampledCount) break;
-    }
-
-    // Always include the last point to close the profile chart cleanly
-    if (profilePoints.length > 0 && profilePoints[profilePoints.length - 1].distance !== activeRoute.points[activeRoute.points.length - 1].distance) {
-      const lastPt = activeRoute.points[activeRoute.points.length - 1];
-      const weather = getInterpolatedWeather(lastPt.lat, lastPt.lng, gridWeather);
-      const effect = classifyWindEffect(lastPt.bearing, weather.windDir);
-      profilePoints[profilePoints.length - 1] = {
-        distance: lastPt.distance,
-        ele: lastPt.ele || 0,
-        windEffect: effect,
-        windSpeed: weather.windSpeed
-      };
-    }
-
-    return {
-      headwind: parseFloat(headwind.toFixed(1)),
-      tailwind: parseFloat(tailwind.toFixed(1)),
-      crosswind: parseFloat(crosswind.toFixed(1)),
-      total: parseFloat(total.toFixed(1)),
-      pctHeadwind: Math.round((headwind / total) * 100) || 0,
-      pctTailwind: Math.round((tailwind / total) * 100) || 0,
-      pctCrosswind: Math.round((crosswind / total) * 100) || 0,
-      avgWindSpeed: avgWind,
-      maxWindSpeed: maxWind,
-      maxElevation: maxEle,
-      minElevation: minEle,
-      profilePoints
-    };
-  };
-
-  const routeAnalysis = analyzeRoute();
-  const shouldHideRightColumn = activeTab === 'hud';
 
   return (
-    <div className="app-viewport-container">
-      {/* Header Bar */}
-      <header className="app-header glass-panel">
-        <div className="header-logo-section">
-          <Bicycle size={28} className="text-safe" weight="fill" />
-          <div className="brand-texts">
-            <h1 className="logo-title">Wind Cycling</h1>
-            <span className="logo-subtitle">Real-time Wind & Route Analysis for Cycling</span>
-          </div>
-        </div>
+    <div className="app">
+      <WindMap
+        ref={mapRef}
+        theme={theme}
+        initialView={startView}
+        frame={frame}
+        flowEnabled={flowEnabled}
+        spots={spots}
+        route={route}
+        routeStops={routeStops}
+        rider={riderInfo}
+        pin={pin}
+        user={user}
+        onPick={handlePick}
+        onSpot={handleSpot}
+        onUserMove={handleUserMove}
+        onMoveStart={handleMoveStart}
+        onViewChange={handleViewChange}
+        getPadding={getPadding}
+        getCovered={getCovered}
+      />
 
-        {/* Live Weather Status Indicator and Locate Me */}
-        <div className="header-actions">
-          <button 
-            onClick={handleLocateMe}
-            className={`locate-me-btn ${selectedSpot?.id === 'user_location' ? 'active-locate' : ''} ${isLocating ? 'locating' : ''}`}
-            disabled={isLocating}
+      <WindReadout
+        ref={readoutRef}
+        title={focusPlace ? focusPlace.title : 'Wind'}
+        when={focusPlace ? whenLabel : null}
+        reading={reading}
+        rider={onRoute && routeHasWind ? riderInfo : null}
+        note={focusPlace?.note}
+        status={status}
+        problem={problem}
+        updatedAt={readingAge ? formatDayClock(readingAge / 1000, zone) : null}
+        stale={readingStale}
+        quiet={isRiding || forecastPlaying}
+        place={savable}
+        onSave={saveFocus}
+        onRemove={removeFocus}
+        onRetry={store.retry}
+      />
+
+      <div className="toolbar" ref={toolbarRef}>
+        <div className="toolbar-menu">
+          <button
+            ref={placesButtonRef}
+            type="button"
+            className="tool-button panel"
+            aria-label="Search places"
+            aria-expanded={menu === 'places'}
+            aria-controls={PLACES_MENU_ID}
+            onClick={() => toggleMenu('places')}
           >
-            {isLocating ? (
-              <span className="button-loader"></span>
-            ) : (
-              <Crosshair size={16} />
-            )}
-            <span>{isLocating ? 'LOCATING...' : 'LOCATE ME'}</span>
+            <MagnifyingGlass size={18} aria-hidden="true" />
+            <span>Search</span>
           </button>
-
-          <div className="forecast-controls-group">
-            {/* Time Forecast Slider */}
-            <div className="forecast-slider-container glass-panel">
-              <span className="forecast-label">
-                {forecastOffset === 0 ? "NOW" : forecastOffset === 24 ? "+24H" : `+${forecastOffset}H`}
-              </span>
-              <div className="slider-wrapper">
-                <input
-                  type="range"
-                  min="0"
-                  max={FORECAST_STEPS.length - 1}
-                  step="1"
-                  value={FORECAST_STEPS.indexOf(forecastOffset)}
-                  onChange={(e) => setForecastOffset(FORECAST_STEPS[parseInt(e.target.value)])}
-                  className={`forecast-slider offset-${forecastOffset}`}
-                />
-                <div className="slider-marks">
-                  {FORECAST_STEPS.map((_, i) => (
-                    <div key={i} className="slider-mark"></div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="live-header-status">
-              {forecastOffset === 0 ? (
-                <>
-                  <span className="live-dot-pulse"></span>
-                  <span className="live-status-text">LIVE REAL-TIME WIND</span>
-                </>
-              ) : (
-                <>
-                  <span className="live-dot-pulse" style={{
-                    backgroundColor: forecastOffset === 24 ? '#2196F3' : 'var(--color-moderate)',
-                    animation: 'none',
-                    boxShadow: 'none'
-                  }}></span>
-                  <span className="live-status-text" style={{
-                    color: forecastOffset === 24 ? '#2196F3' : 'var(--color-moderate)'
-                  }}>
-                    {forecastOffset === 24 ? "FORECAST (NEXT DAY)" : `FORECAST (+${forecastOffset} HRS)`}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Page Layout Grid */}
-      <main className={`app-main-grid ${shouldHideRightColumn ? 'hud-active-grid' : ''}`}>
-        {/* Left Column Controls */}
-        <section className="controls-column">
-          <GpxUploader
-            activeRoute={activeRoute}
-            onRouteLoaded={handleRouteLoaded}
-            onClearRoute={handleClearRoute}
-          />
-        </section>
-
-        {/* Middle Column Views */}
-        <section className="views-column">
-          {/* Tabs Menu */}
-          <div className="tab-menu glass-panel">
-            <button
-              onClick={() => setActiveTab('map')}
-              className={`tab-btn ${activeTab === 'map' ? 'active-tab' : ''}`}
-            >
-              <MapTrifold size={18} />
-              <span>Interactive Wind Map</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('hud')}
-              className={`tab-btn ${activeTab === 'hud' ? 'active-tab' : ''}`}
-            >
-              <Gauge size={18} />
-              <span>Simulate Route</span>
-            </button>
-          </div>
-
-          {/* Active Tab Component */}
-          {isLoading ? (
-            <div className="loading-card glass-panel">
-              <span className="loader-element"></span>
-              <span className="loading-text">Fetching high-res Open-Meteo wind grid...</span>
-            </div>
-          ) : (
-            <div className="tab-content-container">
-              {activeTab === 'map' ? (
-                <div className="map-view-tab animate-fade-in">
-                  <WindMap
-                    gridWeather={gridWeather}
-                    activeRoute={activeRoute}
-                    selectedSpot={selectedSpot}
-                    simulatedState={simulatedState}
-                  />
-                </div>
-              ) : (
-                <div className="hud-view-tab animate-fade-in">
-                  <RideHUD
-                    activeRoute={activeRoute}
-                    gridWeather={gridWeather}
-                    simulatedState={simulatedState}
-                    setSimulatedState={setSimulatedState}
-                  />
-                </div>
-              )}
-            </div>
+          {menu === 'places' && (
+            <PlacesMenu
+              id={PLACES_MENU_ID}
+              places={places}
+              activeId={focusedPlaceId}
+              onPlace={(place) => showPlace(place, placesButtonRef)}
+              onResult={showResult}
+            />
           )}
-        </section>
+        </div>
+        <div className="toolbar-menu">
+          <button
+            ref={routesButtonRef}
+            type="button"
+            className="tool-button panel"
+            aria-label="Routes"
+            aria-expanded={menu === 'routes'}
+            aria-controls={ROUTES_MENU_ID}
+            onClick={() => toggleMenu('routes')}
+          >
+            <Path size={18} aria-hidden="true" />
+            <span>Routes</span>
+          </button>
+          {menu === 'routes' && (
+            <RoutesMenu id={ROUTES_MENU_ID} activeId={route?.id} error={routeError} onPreset={loadPreset} onFile={loadFile} />
+          )}
+        </div>
+        <button
+          type="button"
+          className="tool-button panel"
+          aria-label="Wind motion"
+          aria-pressed={flowEnabled}
+          title="Animate the wind on the map"
+          onClick={() => setFlowEnabled((on) => !on)}
+        >
+          <Wind size={18} aria-hidden="true" />
+          <span>Motion</span>
+        </button>
+        <button
+          type="button"
+          className="tool-button panel"
+          aria-label={theme === 'dark' ? 'Switch to the day map' : 'Switch to the night map'}
+          onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+        >
+          {theme === 'dark' ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+          <span>{theme === 'dark' ? 'Day map' : 'Night map'}</span>
+        </button>
+        <button
+          type="button"
+          className="tool-button panel"
+          aria-label="Locate me"
+          aria-pressed={focus.type === 'me'}
+          disabled={isLocating}
+          onClick={locate}
+        >
+          <Crosshair size={18} aria-hidden="true" />
+          <span>{isLocating ? 'Locating…' : 'Locate me'}</span>
+        </button>
+      </div>
 
-        {/* Right Column Microclimates Panel (Hidden when in HUD simulator) */}
-        {!shouldHideRightColumn && (
-          <section className="microclimates-column">
-            {activeRoute && routeAnalysis ? (
-              <div className="spot-sidebar-panel glass-panel">
-                <div className="sidebar-header-compact">
-                  <span className="sidebar-title">Route Wind Impact</span>
-                </div>
+      {/* the readout already says so when the place in focus could not be loaded either */}
+      {(viewState === 'loading' || (viewState === 'failed' && status !== 'error')) && (
+        <p className={`map-status panel ${viewState}`} role="status">
+          {viewState === 'loading' ? 'Loading the wind…' : (
+            <>
+              The wind for this part of the map could not be loaded.{' '}
+              <button type="button" className="text-button" onClick={store.retry}>Try again</button>
+            </>
+          )}
+        </p>
+      )}
 
-                <div className="sidebar-scroll-list" style={{ padding: '6px 0', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto' }}>
-                  <p className="analysis-text-summary" style={{ fontSize: '0.8rem', lineHeight: '1.4', margin: 0 }}>
-                    Your {routeAnalysis.total} km route has{' '}
-                    <span className="text-danger font-bold">{routeAnalysis.headwind} km</span> of headwind,{' '}
-                    <span className="text-safe font-bold">{routeAnalysis.tailwind} km</span> of tailwind boost, and{' '}
-                    <span className="text-warn font-bold">{routeAnalysis.crosswind} km</span> of side wind sweep.
-                  </p>
+      {notice && (
+        <p key={notice.id} className="notice panel" role="status">
+          {notice.text}
+          {notice.action && (
+            <>
+              {' '}
+              <button type="button" className="text-button" onClick={notice.action.run}>{notice.action.label}</button>
+            </>
+          )}
+        </p>
+      )}
 
-                  {/* 1. Dynamic Elevation & Wind Profile Chart */}
-                  <div className="chart-container-card">
-                    <div className="chart-header-info">
-                      <span>Elevation & Wind Profile</span>
-                      <span className="chart-y-max">{routeAnalysis.maxElevation}m</span>
-                    </div>
-
-                    <div style={{ position: 'relative', width: '100%', height: '80px', marginTop: '4px' }}>
-                      <svg viewBox="0 0 300 80" width="100%" height="100%" preserveAspectRatio="none" style={{ display: 'block' }}>
-                        <defs>
-                          <linearGradient id="eleGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="var(--color-safe)" stopOpacity="0.25" />
-                            <stop offset="100%" stopColor="var(--color-safe)" stopOpacity="0.00" />
-                          </linearGradient>
-                        </defs>
-
-                        {/* Chart elevation area fill */}
-                        <path
-                          d={(() => {
-                            const pts = routeAnalysis.profilePoints;
-                            const range = Math.max(1, routeAnalysis.maxElevation - routeAnalysis.minElevation);
-                            let d = `M 0,60 `;
-                            pts.forEach((pt, i) => {
-                              const px = (i / (pts.length - 1)) * 300;
-                              const py = 60 - ((pt.ele - routeAnalysis.minElevation) / range) * 50;
-                              d += `L ${px},${py} `;
-                            });
-                            d += `L 300,60 Z`;
-                            return d;
-                          })()}
-                          fill="url(#eleGrad)"
-                        />
-
-                        {/* Chart elevation top line */}
-                        <path
-                          d={(() => {
-                            const pts = routeAnalysis.profilePoints;
-                            const range = Math.max(1, routeAnalysis.maxElevation - routeAnalysis.minElevation);
-                            let d = ``;
-                            pts.forEach((pt, i) => {
-                              const px = (i / (pts.length - 1)) * 300;
-                              const py = 60 - ((pt.ele - routeAnalysis.minElevation) / range) * 50;
-                              if (i === 0) d = `M ${px},${py} `;
-                              else d += `L ${px},${py} `;
-                            });
-                            return d;
-                          })()}
-                          fill="none"
-                          stroke="rgba(255,255,255,0.4)"
-                          strokeWidth="1.5"
-                        />
-
-                        {/* Wind ribbon directly below elevation profile */}
-                        {routeAnalysis.profilePoints.map((pt, i) => {
-                          const rx = (i / routeAnalysis.profilePoints.length) * 300;
-                          const rw = 300 / routeAnalysis.profilePoints.length;
-                          let col = 'var(--color-safe)';
-                          if (pt.windEffect === 'headwind') col = 'var(--color-dangerous)';
-                          else if (pt.windEffect === 'crosswind') col = 'var(--color-moderate)';
-
-                          return (
-                            <rect
-                              key={`bar-${i}`}
-                              x={rx}
-                              y={68}
-                              width={rw + 0.5}
-                              height={5}
-                              fill={col}
-                            />
-                          );
-                        })}
-                      </svg>
-                    </div>
-
-                    <div className="chart-x-labels">
-                      <span>0 km</span>
-                      <span style={{ color: 'var(--text-muted)' }}>Wind Ribbon</span>
-                      <span>{routeAnalysis.total} km</span>
-                    </div>
-                  </div>
-
-                  {/* 2. Visual Segment Summary Progress Bars */}
-                  <div className="analysis-bar-chart" style={{ minHeight: '24px', flexShrink: 0 }}>
-                    <div
-                      className="bar-segment bg-safe"
-                      style={{ width: `${routeAnalysis.pctTailwind}%` }}
-                    >
-                      {routeAnalysis.pctTailwind > 5 && `${routeAnalysis.pctTailwind}%`}
-                    </div>
-                    <div
-                      className="bar-segment bg-moderate"
-                      style={{ width: `${routeAnalysis.pctCrosswind}%` }}
-                    >
-                      {routeAnalysis.pctCrosswind > 5 && `${routeAnalysis.pctCrosswind}%`}
-                    </div>
-                    <div
-                      className="bar-segment bg-dangerous"
-                      style={{ width: `${routeAnalysis.pctHeadwind}%` }}
-                    >
-                      {routeAnalysis.pctHeadwind > 5 && `${routeAnalysis.pctHeadwind}%`}
-                    </div>
-                  </div>
-
-                  {/* 3. Metrics grid */}
-                  <div className="analysis-stats-grid">
-                    <div className="analysis-stat-box">
-                      <span className="analysis-stat-lbl">Average Wind</span>
-                      <span className="analysis-stat-val">
-                        {routeAnalysis.avgWindSpeed}
-                        <span className="analysis-stat-unit">km/h</span>
-                      </span>
-                    </div>
-                    <div className="analysis-stat-box">
-                      <span className="analysis-stat-lbl">Max Wind</span>
-                      <span className="analysis-stat-val">
-                        {routeAnalysis.maxWindSpeed}
-                        <span className="analysis-stat-unit">km/h</span>
-                      </span>
-                    </div>
-                    <div className="analysis-stat-box">
-                      <span className="analysis-stat-lbl">Climbing Gain</span>
-                      <span className="analysis-stat-val">
-                        +{activeRoute.totalElevationGain}
-                        <span className="analysis-stat-unit">m</span>
-                      </span>
-                    </div>
-                    <div className="analysis-stat-box">
-                      <span className="analysis-stat-lbl">Peak Elevation</span>
-                      <span className="analysis-stat-val">
-                        {routeAnalysis.maxElevation}
-                        <span className="analysis-stat-unit">m</span>
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 4. Dynamic Ride Advisory Card */}
-                  {(() => {
-                    let title = "Optimal Conditions";
-                    let adviceClass = "safe";
-                    let text = "Balanced conditions along the route. Perfect for general training and climbing pacing.";
-                    let Icon = ShieldCheck;
-
-                    if (routeAnalysis.pctHeadwind > 40) {
-                      title = "Heavy Resistance";
-                      adviceClass = "dangerous";
-                      text = "Over 40% of this route is hit by direct headwinds. Pace your climbs.";
-                      Icon = Warning;
-                    } else if (routeAnalysis.pctCrosswind > 35) {
-                      title = "Rim Warning";
-                      adviceClass = "moderate";
-                      text = "High side winds swept across key sectors.";
-                      Icon = Warning;
-                    } else if (routeAnalysis.pctTailwind > 45) {
-                      title = "Tailwind Boost";
-                      adviceClass = "safe";
-                      text = "Over 45% of tailwind boost! Perfect day for high-speed loops and chasing segments.";
-                      Icon = ShieldCheck;
-                    }
-
-                    return (
-                      <div className={`advice-badge-card ${adviceClass}`}>
-                        <div className={`advice-badge-icon ${adviceClass}`}>
-                          <Icon size={18} />
-                        </div>
-                        <div>
-                          <h5 className="advice-badge-title">{title}</h5>
-                          <p className="advice-badge-desc">{text}</p>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            ) : (
-              <SpotShortcuts
-                selectedSpot={selectedSpot}
-                onSelectSpot={handleSelectSpot}
-                gridWeather={gridWeather}
-                getSpotWeather={getSpotWeather}
-              />
-            )}
-          </section>
+      <div className="dock" ref={dockRef}>
+        {route && (
+          <RoutePanel
+            route={route}
+            analysis={analysis}
+            windState={routeState}
+            riderIdx={riderIdx}
+            onScrub={scrubRoute}
+            onClear={clearRoute}
+            playing={isRiding}
+            onTogglePlay={toggleRide}
+            playbackRate={playbackRate}
+            onPlaybackRate={setPlaybackRate}
+            rideKmh={rideKmh}
+            onRideKmh={setRideKmh}
+            startLabel={followingNow ? `now (${formatClock(shownTime, zone)})` : formatDayClock(shownTime, zone)}
+            collapsed={folded.route}
+            onToggleCollapsed={() => setFolded((prev) => ({ ...prev, route: !prev.route }))}
+            colors={colors}
+          />
         )}
-      </main>
-
-
-
-      <style>{`
-        .app-viewport-container {
-          min-height: 100vh;
-          display: flex;
-          flex-direction: column;
-          padding: 16px;
-          gap: 16px;
-          max-width: 1400px;
-          margin: 0 auto;
-          width: 100%;
-        }
-
-        .app-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 20px;
-          flex-wrap: wrap;
-          gap: 12px;
-        }
-
-        .header-logo-section {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .brand-texts {
-          display: flex;
-          flex-direction: column;
-        }
-
-        .logo-title {
-          font-family: var(--font-sans);
-          font-size: 1.4rem;
-          font-weight: 900;
-          color: var(--text-primary);
-          letter-spacing: -0.5px;
-          margin: 0;
-          line-height: 1.1;
-        }
-
-        .logo-subtitle {
-          font-size: 0.65rem;
-          font-weight: 600;
-          color: var(--text-secondary);
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-
-        .weather-preset-selector {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .preset-label {
-          font-size: 0.72rem;
-          font-weight: 700;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-
-        .header-actions {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-        }
-
-        .forecast-controls-group {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          gap: 4px;
-        }
-
-        .app-main-grid {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 16px;
-          flex: 1;
-          width: 100%;
-        }
-
-        @media (min-width: 768px) and (max-width: 1199px) {
-          .header-actions {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-        }
-
-        .forecast-controls-group {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          gap: 4px;
-        }
-
-        .app-main-grid {
-            grid-template-columns: 320px 1fr;
-          }
-          .microclimates-column {
-            grid-column: span 2;
-          }
-        }
-
-        @media (min-width: 1200px) {
-          .header-actions {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-        }
-
-        .forecast-controls-group {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          gap: 4px;
-        }
-
-        .app-main-grid {
-            grid-template-columns: 320px 1fr 340px;
-          }
-          .app-main-grid.hud-active-grid {
-            grid-template-columns: 320px 1fr;
-          }
-        }
-
-        .controls-column {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .views-column {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          min-width: 0;
-        }
-
-        .microclimates-column {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .tab-menu {
-          display: flex;
-          padding: 4px;
-          gap: 4px;
-          border-radius: 12px !important;
-        }
-
-        .tab-btn {
-          flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          background: transparent;
-          border: none;
-          outline: none;
-          color: var(--text-secondary);
-          font-family: var(--font-sans);
-          font-size: 0.88rem;
-          font-weight: 700;
-          padding: 10px 16px;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-
-        .tab-btn:hover {
-          background: rgba(255, 255, 255, 0.03);
-          color: var(--text-primary);
-        }
-
-        .active-tab {
-          background: rgba(255, 255, 255, 0.06) !important;
-          color: var(--color-safe) !important;
-        }
-
-        .tab-content-container {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-        }
-
-        .loading-card {
-          padding: 40px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          height: 380px;
-        }
-
-        .loader-element {
-          width: 32px;
-          height: 32px;
-          border: 3px solid rgba(0, 230, 118, 0.1);
-          border-radius: 50%;
-          border-top-color: var(--color-safe);
-          animation: spin 1s linear infinite;
-        }
-
-        .loading-text {
-          font-size: 0.85rem;
-          color: var(--text-secondary);
-          font-weight: 500;
-        }
-
-        .route-analysis-card {
-          padding: 16px;
-          background: var(--bg-panel);
-          border: 1px solid var(--border-color);
-          border-radius: 16px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .analysis-header {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .analysis-title {
-          font-size: 0.95rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          margin: 0;
-          color: var(--text-primary);
-        }
-
-        .analysis-text-summary {
-          font-size: 0.88rem;
-          color: var(--text-secondary);
-          line-height: 1.45;
-          margin: 0;
-        }
-
-        .font-bold {
-          font-weight: 700;
-        }
-
-        .analysis-bar-chart {
-          display: flex;
-          height: 24px;
-          border-radius: 12px;
-          overflow: hidden;
-          background: rgba(0, 0, 0, 0.3);
-          border: 1px solid var(--border-color);
-          font-family: var(--font-sans);
-          font-size: 0.72rem;
-          font-weight: 800;
-          color: #000;
-        }
-
-        .bar-segment {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          transition: width 0.5s ease;
-          overflow: hidden;
-          white-space: nowrap;
-        }
-
-        .bg-safe {
-          background-color: var(--color-safe);
-          color: #000 !important;
-        }
-
-        .bg-moderate {
-          background-color: var(--color-moderate);
-          color: #000 !important;
-        }
-
-        .bg-dangerous {
-          background-color: var(--color-dangerous);
-          color: #000 !important;
-        }
-
-        .analysis-legend {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 16px;
-          margin-top: 4px;
-        }
-
-        .legend-item {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 0.75rem;
-          color: var(--text-secondary);
-          font-weight: 600;
-        }
-
-        .legend-dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-        }
-
-        .app-footer {
-          text-align: center;
-          padding: 16px 0;
-          border-top: 1px solid rgba(255, 255, 255, 0.03);
-        }
-
-        .footer-credits {
-          font-size: 0.72rem;
-          color: var(--text-muted);
-          font-weight: 500;
-        }
-
-        .animate-fade-in {
-          animation: fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-
-        @keyframes fade-in {
-          from { opacity: 0; transform: translateY(4px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        .live-header-status {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          background: rgba(0, 230, 118, 0.05);
-          border: 1px solid rgba(0, 230, 118, 0.15);
-          padding: 4px 10px;
-          border-radius: 20px;
-        }
-
-        .live-status-text {
-          font-size: 0.65rem;
-          font-weight: 800;
-          color: var(--color-safe);
-          letter-spacing: 0.5px;
-          font-family: var(--font-sans);
-        }
-
-        .locate-me-btn {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid rgba(255, 255, 255, 0.15);
-          padding: 6px 14px;
-          border-radius: 20px;
-          color: var(--text-primary);
-          font-family: var(--font-sans);
-          font-size: 0.65rem;
-          font-weight: 800;
-          letter-spacing: 0.5px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .locate-me-btn:hover {
-          background: rgba(255, 255, 255, 0.1);
-          border-color: rgba(255, 255, 255, 0.25);
-          color: var(--color-safe);
-        }
-
-        .locate-me-btn.active-locate {
-          background: rgba(0, 230, 118, 0.15);
-          border-color: rgba(0, 230, 118, 0.4);
-          color: var(--color-safe);
-          box-shadow: 0 0 10px rgba(0, 230, 118, 0.2);
-        }
-
-        .locate-me-btn svg {
-          transition: color 0.2s ease;
-        }
-        
-        .locate-me-btn:hover svg, .locate-me-btn.active-locate svg {
-          color: var(--color-safe);
-        }
-
-        .locate-me-btn.locating {
-          opacity: 0.8;
-          cursor: wait;
-        }
-
-        .button-loader {
-          width: 14px;
-          height: 14px;
-          border: 2px solid rgba(0, 230, 118, 0.2);
-          border-radius: 50%;
-          border-top-color: var(--color-safe);
-          animation: spin 0.8s linear infinite;
-        }
-
-        /* Premium Route Analysis Card sidebar specific styles */
-        .spot-sidebar-panel {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-          width: 100%;
-          max-height: calc(100vh - 200px);
-          overflow: hidden;
-          padding: 12px;
-        }
-
-        .analysis-stats-grid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 8px;
-          margin-top: 4px;
-        }
-
-        .analysis-stat-box {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          background: rgba(255, 255, 255, 0.02);
-          border: 1px solid var(--border-color);
-          border-radius: 8px;
-          padding: 8px 10px;
-          transition: border-color 0.2s ease;
-        }
-
-        .analysis-stat-box:hover {
-          border-color: rgba(255, 255, 255, 0.08);
-        }
-
-        .analysis-stat-lbl {
-          font-size: 0.58rem;
-          font-weight: 700;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.3px;
-        }
-
-        .analysis-stat-val {
-          font-family: var(--font-mono);
-          font-size: 0.82rem;
-          font-weight: 800;
-          color: var(--text-primary);
-        }
-
-        .analysis-stat-unit {
-          font-size: 0.6rem;
-          color: var(--text-secondary);
-          margin-left: 2px;
-        }
-
-        .advice-badge-card {
-          display: flex;
-          align-items: flex-start;
-          gap: 10px;
-          padding: 10px 12px;
-          border-radius: 8px;
-          border: 1px solid rgba(255, 255, 255, 0.05);
-          background: rgba(255, 255, 255, 0.01);
-          margin-top: 4px;
-        }
-
-        .advice-badge-card.safe {
-          border-color: rgba(0, 230, 118, 0.15);
-          background: rgba(0, 230, 118, 0.02);
-        }
-
-        .advice-badge-card.moderate {
-          border-color: rgba(255, 145, 0, 0.15);
-          background: rgba(255, 145, 0, 0.02);
-        }
-
-        .advice-badge-card.dangerous {
-          border-color: rgba(255, 23, 68, 0.15);
-          background: rgba(255, 23, 68, 0.02);
-        }
-
-        .advice-badge-icon {
-          flex-shrink: 0;
-          margin-top: 1px;
-        }
-
-        .advice-badge-icon.safe { color: var(--color-safe); }
-        .advice-badge-icon.moderate { color: var(--color-moderate); }
-        .advice-badge-icon.dangerous { color: var(--color-dangerous); }
-
-        .advice-badge-title {
-          font-size: 0.75rem;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-          color: var(--text-primary);
-          margin: 0;
-        }
-
-        .advice-badge-desc {
-          font-size: 0.68rem;
-          color: var(--text-secondary);
-          line-height: 1.35;
-          margin: 3px 0 0 0;
-        }
-
-        .chart-container-card {
-          background: rgba(0, 0, 0, 0.2);
-          border: 1px solid var(--border-color);
-          border-radius: 10px;
-          padding: 10px;
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .chart-header-info {
-          display: flex;
-          justify-content: space-between;
-          font-size: 0.62rem;
-          font-weight: 700;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.3px;
-        }
-
-        .chart-y-max {
-          color: var(--text-secondary);
-        }
-
-        .chart-x-labels {
-          display: flex;
-          justify-content: space-between;
-          font-size: 0.58rem;
-          font-family: var(--font-mono);
-          color: var(--text-muted);
-          margin-top: -2px;
-        }
-        .forecast-slider-container {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 6px 14px;
-          border-radius: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .forecast-label {
-          font-family: var(--font-mono);
-          font-size: 0.65rem;
-          font-weight: 700;
-          color: var(--text-primary);
-          min-width: 28px;
-        }
-
-        .forecast-slider {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 160px;
-          height: 4px;
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 2px;
-          outline: none;
-          cursor: pointer;
-          position: relative;
-          z-index: 2;
-        }
-
-        .slider-wrapper {
-          position: relative;
-          display: flex;
-          align-items: center;
-        }
-
-        .slider-marks {
-          position: absolute;
-          width: 100%;
-          display: flex;
-          justify-content: space-between;
-          padding: 0 4px;
-          pointer-events: none;
-        }
-
-        .slider-mark {
-          width: 2px;
-          height: 8px;
-          background: rgba(255, 255, 255, 0.2);
-          border-radius: 1px;
-        }
-
-        .forecast-slider.offset-0::-webkit-slider-thumb { background: var(--color-safe); }
-        .forecast-slider.offset-1::-webkit-slider-thumb { background: var(--color-moderate); }
-        .forecast-slider.offset-2::-webkit-slider-thumb { background: var(--color-moderate); }
-        .forecast-slider.offset-3::-webkit-slider-thumb { background: var(--color-moderate); }
-        .forecast-slider.offset-24::-webkit-slider-thumb { background: #2196F3; }
-
-        .forecast-slider.offset-0::-moz-range-thumb { background: var(--color-safe); }
-        .forecast-slider.offset-1::-moz-range-thumb { background: var(--color-moderate); }
-        .forecast-slider.offset-2::-moz-range-thumb { background: var(--color-moderate); }
-        .forecast-slider.offset-3::-moz-range-thumb { background: var(--color-moderate); }
-        .forecast-slider.offset-24::-moz-range-thumb { background: #2196F3; }
-
-        .forecast-slider::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 16px;
-          height: 16px;
-          border-radius: 50%;
-          cursor: pointer;
-          border: 2px solid #0a0c10;
-          transition: background 0.2s ease;
-        }
-
-        .forecast-slider::-moz-range-thumb {
-          width: 16px;
-          height: 16px;
-          border-radius: 50%;
-          cursor: pointer;
-          border: 2px solid #0a0c10;
-          transition: background 0.2s ease;
-        }
-
-        @media (max-width: 767px) {
-          .app-viewport-container {
-            padding: 10px;
-            gap: 10px;
-          }
-
-          .app-header {
-            padding: 12px;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 12px;
-          }
-
-          .views-column {
-            order: -1;
-          }
-
-          .header-actions {
-            width: 100%;
-            flex-wrap: wrap;
-            justify-content: space-between;
-          }
-
-          .forecast-controls-group {
-            align-items: flex-end;
-          }
-
-          .logo-title {
-            font-size: 1.2rem;
-          }
-
-          .logo-subtitle {
-            font-size: 0.65rem;
-          }
-
-          .locate-me-btn {
-            padding: 6px 10px;
-          }
-
-          .forecast-slider-container {
-            padding: 6px 10px;
-            gap: 8px;
-          }
-
-          .forecast-slider {
-            width: 120px;
-          }
-          .slider-marks {
-            width: 120px;
-          }
-
-          .live-header-status {
-            padding: 6px 10px;
-          }
-
-          .live-status-text {
-            font-size: 0.65rem;
-          }
-
-          .tab-btn {
-            padding: 8px;
-            gap: 4px;
-            flex-direction: column;
-          }
-
-          .tab-btn span {
-            font-size: 0.7rem;
-            text-align: center;
-          }
-
-          .spot-sidebar-panel {
-            max-height: none;
-            padding: 12px;
-          }
-
-          .analysis-stats-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-        }
-      `}</style>
+        <TimeBar
+          hours={series}
+          selected={selectedHour}
+          nowTime={hourBase}
+          shownTime={shownTime}
+          nowReading={nowReading}
+          onSelect={selectHour}
+          playing={forecastPlaying}
+          onTogglePlay={() => setForecastPlaying((playing) => !playing)}
+          place={barsPlace}
+          zone={zone}
+          rideStart={followingRider}
+          collapsed={folded.time}
+          onToggleCollapsed={() => setFolded((prev) => ({ ...prev, time: !prev.time }))}
+        />
+      </div>
     </div>
   );
 }

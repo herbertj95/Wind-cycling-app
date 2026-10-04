@@ -1,184 +1,1417 @@
-.counter {
-  font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-  margin-bottom: 24px;
+/* Layout: a full-screen map with a wind readout (top left), tools (top right) and a dock (bottom). */
 
-  &:hover {
-    border-color: var(--accent-border);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
+.app {
+  position: fixed;
+  inset: 0;
 }
 
-.hero {
-  position: relative;
-
-  .base,
-  .framework,
-  .vite {
-    inset-inline: 0;
-    margin: 0 auto;
-  }
-
-  .base {
-    width: 170px;
-    position: relative;
-    z-index: 0;
-  }
-
-  .framework,
-  .vite {
-    position: absolute;
-  }
-
-  .framework {
-    z-index: 1;
-    top: 34px;
-    height: 28px;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
-      scale(1.4);
-  }
-
-  .vite {
-    z-index: 0;
-    top: 107px;
-    height: 26px;
-    width: auto;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
-      scale(0.8);
-  }
+.wind-map {
+  position: absolute;
+  inset: 0;
 }
 
-#center {
-  display: flex;
-  flex-direction: column;
-  gap: 25px;
-  place-content: center;
-  place-items: center;
-  flex-grow: 1;
-
-  @media (max-width: 1024px) {
-    padding: 32px 20px 24px;
-    gap: 18px;
-  }
+.map-unavailable {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(320px, 80vw);
+  margin: 0;
+  transform: translate(-50%, -50%);
+  font-size: 15px;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--ink-2);
 }
 
-#next-steps {
-  display: flex;
-  border-top: 1px solid var(--border);
-  text-align: left;
-
-  & > div {
-    flex: 1 1 0;
-    padding: 32px;
-    @media (max-width: 1024px) {
-      padding: 24px 20px;
-    }
-  }
-
-  .icon {
-    margin-bottom: 16px;
-    width: 22px;
-    height: 22px;
-  }
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-    text-align: center;
-  }
+.wind-map canvas.map-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
-#docs {
-  border-right: 1px solid var(--border);
-
-  @media (max-width: 1024px) {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 
-#next-steps ul {
-  list-style: none;
+/* read by screen readers, not drawn */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.text-button {
+  background: none;
+  border: 0;
   padding: 0;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.icon-button,
+.round-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: none;
+  border: 1px solid var(--hair);
+}
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.round-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.pill-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--inv);
+  color: var(--inv-ink);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* on phones the three speed buttons become one that cycles */
+.speed-cycle {
+  display: none;
+  min-width: 44px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented button {
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* the group clips its children, so the focus ring is drawn inside the button */
+.segmented button:focus-visible {
+  outline-offset: -2px;
+}
+
+.segmented button[aria-pressed='true'] {
+  background: var(--track);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------- wind readout ---------- */
+
+.readout {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--gap) + env(safe-area-inset-top));
+  left: calc(var(--gap) + env(safe-area-inset-left));
+  width: 292px;
+  padding: 14px 16px 12px;
+}
+
+/* The place and the time share a line when they fit. When they do not (a long name, or a time that
+   carries its zone), the time goes below the name instead of squeezing it into a column. */
+.readout-top {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 10px;
+}
+
+.readout-top.can-save {
+  padding-right: 30px;
+}
+
+.readout h1 {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.readout-top span {
+  flex: none;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* the button keeps the top right corner, whatever the name and the time do */
+.readout-save {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  border-color: transparent;
+}
+
+.readout-save[aria-pressed='true'] {
+  color: var(--ink);
+}
+
+.readout-name {
   display: flex;
   gap: 8px;
-  margin: 32px 0 0;
-
-  .logo {
-    height: 18px;
-  }
-
-  a {
-    color: var(--text-h);
-    font-size: 16px;
-    border-radius: 6px;
-    background: var(--social-bg);
-    display: flex;
-    padding: 6px 12px;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
-
-    &:hover {
-      box-shadow: var(--shadow);
-    }
-    .button-icon {
-      height: 18px;
-      width: 18px;
-    }
-  }
-
-  @media (max-width: 1024px) {
-    margin-top: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-
-    li {
-      flex: 1 1 calc(50% - 8px);
-    }
-
-    a {
-      width: 100%;
-      justify-content: center;
-      box-sizing: border-box;
-    }
-  }
+  margin-top: 10px;
 }
 
-#spacer {
-  height: 88px;
-  border-top: 1px solid var(--border);
-  @media (max-width: 1024px) {
-    height: 48px;
-  }
+.readout-name input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: var(--track);
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
 }
 
-.ticks {
+.readout-name input::placeholder,
+.search-field input::placeholder {
+  color: var(--ink-3);
+}
+
+.readout-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.wind-dial {
+  width: 76px;
+  height: 76px;
+  flex: none;
+}
+
+.wind-dial text {
+  font-family: var(--font-sans);
+}
+
+.readout-speed {
+  font-family: var(--font-numerals);
+  font-weight: 700;
+  font-size: 58px;
+  line-height: 0.9;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.readout-speed small {
+  margin-left: 5px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+
+.readout-direction {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.readout-direction b {
+  font-weight: 600;
+}
+
+.readout-direction span {
+  color: var(--ink-3);
+}
+
+.readout-side {
+  display: none;
+}
+
+.readout-stats {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hair);
+}
+
+.readout-stats dt {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.readout-stats dd {
+  margin-top: 1px;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.readout-stats dd small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.readout-effect,
+.readout-note,
+.readout-offline {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hair);
+}
+
+.readout-effect {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.readout-note {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.readout-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+.readout-offline {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.readout-offline svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.readout-offline .text-button {
+  color: var(--ink);
+}
+
+.readout-message {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.readout-message .text-button {
+  margin-top: 8px;
+  color: var(--ink);
+}
+
+/* ---------- tools ---------- */
+
+.toolbar {
+  position: absolute;
+  z-index: 6;
+  top: calc(var(--gap) + env(safe-area-inset-top));
+  right: calc(var(--gap) + env(safe-area-inset-right));
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.toolbar-menu {
   position: relative;
+}
+
+.tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tool-button svg {
+  flex: none;
+}
+
+.tool-button[aria-pressed='true'] {
+  background: var(--inv);
+  color: var(--inv-ink);
+}
+
+/* the two toolbar menus: places (search and saved places) and routes */
+.menu-panel {
+  position: absolute;
+  top: 52px;
+  right: 0;
+  width: 288px;
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.menu-panel button {
+  display: block;
   width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+}
 
-  &::before,
-  &::after {
-    content: '';
-    position: absolute;
-    top: -4.5px;
-    border: 5px solid transparent;
+.menu-panel button:hover,
+.menu-panel button[aria-current='true'] {
+  background: var(--track);
+}
+
+.menu-panel b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.menu-panel small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+
+.menu-panel .upload-button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+  border: 1px dashed var(--hair);
+}
+
+.menu-panel .upload-button svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.menu-heading {
+  padding: 8px 10px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.menu-note {
+  padding: 6px 10px 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  margin-bottom: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: 7px;
+  background: var(--track);
+}
+
+.search-field:focus-within {
+  border-color: var(--ink-3);
+}
+
+.search-field svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.search-field input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  outline: none;
+}
+
+/* the browser's own clear button follows the ink colour of neither theme */
+.search-field input::-webkit-search-cancel-button {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.menu-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px 8px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.menu-error svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.notice {
+  position: absolute;
+  z-index: 8;
+  top: calc(var(--gap) + env(safe-area-inset-top) + 56px);
+  left: 50%;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 10px 14px;
+  transform: translateX(-50%);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.notice .text-button {
+  margin-left: 4px;
+}
+
+/* what is going on with the wind for the part of the map on screen; next to the map credits */
+.map-status {
+  position: absolute;
+  z-index: 4;
+  left: calc(46px + env(safe-area-inset-left));
+  bottom: calc(var(--dock-h, 110px) + 21px + env(safe-area-inset-bottom));
+  max-width: min(340px, calc(100vw - 70px));
+  padding: 5px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+/* a view that loads at once says nothing: the note only shows when loading takes a while */
+.map-status.loading {
+  animation: status-in 0.01s 0.7s both;
+}
+
+@keyframes status-in {
+  from {
+    visibility: hidden;
   }
 
-  &::before {
-    left: 0;
-    border-left-color: var(--border);
+  to {
+    visibility: visible;
   }
-  &::after {
-    right: 0;
-    border-right-color: var(--border);
+}
+
+.map-status .text-button {
+  color: var(--ink);
+}
+
+/* ---------- dock: route and time ---------- */
+
+.dock {
+  position: absolute;
+  z-index: 5;
+  left: calc(var(--gap) + env(safe-area-inset-left));
+  right: calc(var(--gap) + env(safe-area-inset-right));
+  bottom: calc(var(--gap) + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.route-panel {
+  /* its own width, not the window's, decides whether the profile fits beside the summary */
+  container-type: inline-size;
+  padding: 12px 16px 10px;
+}
+
+/* folded away: the name, the buttons and the strip that splits the route by wind */
+.route-panel.collapsed {
+  padding-bottom: 12px;
+}
+
+.route-panel.collapsed .share-bar {
+  margin-top: 8px;
+}
+
+.route-body {
+  margin-top: 6px;
+}
+
+.route-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.route-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.route-meta {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.route-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.route-plan {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.route-plan select {
+  padding: 1px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--ink-3);
+  border-radius: 0;
+  background: none;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.route-plan select option {
+  background: var(--page);
+  color: var(--ink);
+}
+
+.share-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin-top: 10px;
+}
+
+.share-bar i {
+  display: block;
+  min-width: 2px;
+  border-radius: 3px;
+}
+
+.share-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.share-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.share-key b {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.share-km {
+  font-style: normal;
+}
+
+.share-key .share-net {
+  display: inline;
+}
+
+.route-advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+.route-advice svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--ink);
+}
+
+.route-advice b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.route-point {
+  min-height: 18px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-chart {
+  display: block;
+  width: 100%;
+  height: 96px;
+  margin-top: 4px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* A wide panel puts the profile beside the summary instead of under it: the same content in about
+   two thirds of the height, which is map given back. */
+@media (min-height: 601px) {
+  @container (min-width: 880px) {
+    .route-body {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      column-gap: 28px;
+    }
+
+    .route-summary .route-plan {
+      margin-top: 0;
+    }
+
+    .route-profile {
+      display: flex;
+      flex-direction: column;
+      min-height: 122px;
+    }
+
+    .route-profile .route-point {
+      margin-top: 0;
+    }
+
+    /* as tall as the summary beside it */
+    .route-profile .route-chart {
+      flex: 1 1 0;
+      height: auto;
+      min-height: 0;
+    }
+  }
+}
+
+/* an svg gets the browser's own focus ring on a mouse click as well; the ring below is for the keyboard */
+.route-chart:focus {
+  outline: none;
+}
+
+.route-chart:focus-visible,
+.timebar-bars:focus-visible {
+  outline: 1.5px solid var(--ink-3);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.route-chart text {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  fill: var(--ink-2);
+  paint-order: stroke;
+  stroke: var(--page);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+:root[data-theme='light'] .route-chart text {
+  stroke: #ffffff;
+}
+
+.timebar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px 14px 8px;
+}
+
+.timebar .round-button {
+  grid-row: span 2;
+}
+
+.timebar-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.timebar-label strong {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.timebar-label span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.timebar-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.timebar-label .text-button {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* the fold button sits in the label row without making it taller */
+.timebar-actions .icon-button {
+  margin: -8px -6px -8px 0;
+  border-color: transparent;
+}
+
+/* folded away: one line that still says which moment the map shows */
+.timebar.collapsed {
+  align-items: center;
+  padding: 6px 14px;
+}
+
+.timebar.collapsed .round-button {
+  grid-row: auto;
+  width: 32px;
+  height: 32px;
+}
+
+.timebar.collapsed .timebar-label {
+  align-items: center;
+}
+
+.timebar-bars {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 58px;
+  padding-bottom: 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.bar {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.bar i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 2px 2px 0 0;
+}
+
+.bar .gust {
+  background: var(--track);
+}
+
+.bar .speed {
+  background: var(--ink-3);
+}
+
+.bar.past .speed {
+  opacity: 0.45;
+}
+
+/* an hour whose wind is not loaded keeps its place as a faint mark */
+.bar.empty::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--track);
+}
+
+.bar.empty.selected::after {
+  bottom: -7px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.bar.selected .speed {
+  background: var(--ink);
+  opacity: 1;
+}
+
+.bar.selected .gust {
+  background: var(--hair);
+}
+
+.bar.selected::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* a hairline and the date where a new day starts */
+.bar.day::before {
+  content: attr(data-day);
+  position: absolute;
+  bottom: -15px;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+  padding-left: 4px;
+  border-left: 1px solid var(--hair);
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---------- things drawn on the map ---------- */
+
+.spot-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 7px;
+  border: 1px solid var(--hair);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--ink);
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* a taller invisible hit area so the labels are easy to tap */
+.spot-chip::before {
+  content: '';
+  position: absolute;
+  inset: -9px -4px;
+}
+
+.spot-chip em {
+  max-width: 132px;
+  overflow: hidden;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+}
+
+/* the wind arrow; an empty one (still air, or nothing loaded) takes no room */
+.spot-chip span {
+  display: inline-flex;
+}
+
+.spot-chip span:empty {
+  display: none;
+}
+
+/* no room for this label at this zoom: see arrangeSpots in windMap.js */
+.spot-chip.crowded {
+  visibility: hidden;
+}
+
+.spot-chip b {
+  font-family: var(--font-numerals);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.spot-chip svg {
+  width: 12px;
+  height: 12px;
+}
+
+.spot-chip.selected {
+  border-color: transparent;
+  background: var(--inv);
+  color: var(--inv-ink);
+}
+
+.spot-chip.selected em {
+  color: var(--inv-ink);
+  opacity: 0.75;
+}
+
+.map-pin {
+  /* taps go through to the map, so a double-click on the pin still zooms */
+  pointer-events: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--inv);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--inv-ink);
+}
+
+.user-dot {
+  width: 16px;
+  height: 16px;
+  border: 3px solid var(--inv-ink);
+  border-radius: 50%;
+  background: var(--inv);
+  box-shadow: 0 0 0 2px var(--inv), 0 0 0 9px var(--track);
+}
+
+.route-endpoint {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--inv);
+  color: var(--inv-ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.rider-marker {
+  width: 52px;
+  height: 52px;
+  pointer-events: none;
+}
+
+/* map controls stay above the dock and clear of rounded screen corners */
+.maplibregl-ctrl-bottom-left,
+.maplibregl-ctrl-bottom-right {
+  bottom: calc(var(--dock-h, 110px) + 18px + env(safe-area-inset-bottom));
+}
+
+.maplibregl-ctrl-bottom-left {
+  left: env(safe-area-inset-left);
+}
+
+.maplibregl-ctrl-bottom-right {
+  right: env(safe-area-inset-right);
+}
+
+:root[data-theme='dark'] .maplibregl-ctrl-group {
+  background: var(--panel);
+}
+
+:root[data-theme='dark'] .maplibregl-ctrl-group button + button {
+  border-top-color: var(--hair);
+}
+
+:root[data-theme='dark'] .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+
+.maplibregl-ctrl-attrib {
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+:root[data-theme='dark'] .maplibregl-ctrl-attrib {
+  background: rgba(9, 23, 33, 0.75);
+  color: var(--ink-3);
+}
+
+:root[data-theme='dark'] .maplibregl-ctrl-attrib a {
+  color: var(--ink-2);
+}
+
+/* five labelled buttons and the readout do not fit side by side below this width */
+@media (max-width: 1040px) {
+  .tool-button span {
+    display: none;
+  }
+}
+
+/* ---------- phone ---------- */
+
+@media (max-width: 720px) {
+  .readout {
+    right: calc(var(--gap) + env(safe-area-inset-right));
+    width: auto;
+    padding: 10px 12px;
+  }
+
+  .readout-main {
+    gap: 12px;
+    margin-top: 4px;
+  }
+
+  .wind-dial {
+    width: 60px;
+    height: 60px;
+  }
+
+  .readout-speed {
+    font-size: 44px;
+  }
+
+  .readout-direction {
+    margin-top: 3px;
+    font-size: 14px;
+  }
+
+  .readout-stats,
+  .readout-hint {
+    display: none;
+  }
+
+  .readout-note {
+    overflow: hidden;
+    margin-top: 6px;
+    padding-top: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* gusts stay visible on a phone: they move next to the speed */
+  .readout-side {
+    display: block;
+    margin-left: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: right;
+    color: var(--ink-2);
+  }
+
+  .readout-side b {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  /* a row of buttons just above the dock, so it never climbs over the readout */
+  .toolbar {
+    top: auto;
+    bottom: calc(var(--dock-h, 110px) + 20px + env(safe-area-inset-bottom));
+    flex-direction: row-reverse;
+  }
+
+  .toolbar-menu {
+    position: static;
+  }
+
+  /* the route list is a sheet over the bottom of the screen */
+  .menu-panel {
+    position: fixed;
+    z-index: 9;
+    top: auto;
+    right: calc(var(--gap) + env(safe-area-inset-right));
+    bottom: calc(var(--gap) + env(safe-area-inset-bottom));
+    left: calc(var(--gap) + env(safe-area-inset-left));
+    width: auto;
+    max-height: 70dvh;
+  }
+
+  /* the search opens at the top instead, where the on-screen keyboard does not cover it */
+  .places-menu {
+    top: calc(var(--gap) + env(safe-area-inset-top));
+    bottom: auto;
+    max-height: min(60dvh, 420px);
+  }
+
+  .readout-name {
+    margin-top: 8px;
+  }
+
+  /* above the row of tool buttons */
+  .map-status {
+    left: calc(var(--gap) + env(safe-area-inset-left));
+    bottom: calc(var(--dock-h, 110px) + 74px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 2 * var(--gap));
+  }
+
+  .timebar-place {
+    display: none;
+  }
+
+  .notice {
+    top: calc(var(--gap) + env(safe-area-inset-top) + 150px);
+  }
+
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group {
+    display: none;
+  }
+
+  .spot-chip em {
+    display: none;
+  }
+
+  .spot-chip.selected em {
+    display: inline;
+  }
+
+  .route-panel {
+    padding: 10px 12px 8px;
+  }
+
+  /* name and buttons on one line, distance and climbing on the next, so neither is cut off */
+  .route-head {
+    flex-wrap: wrap;
+    gap: 2px 8px;
+  }
+
+  .route-head h2 {
+    flex: 1 1 0;
+    font-size: 15px;
+  }
+
+  .route-meta {
+    order: 3;
+    flex-basis: 100%;
+    font-size: 12px;
+  }
+
+  .route-actions .segmented,
+  .share-km,
+  .share-key .share-net {
+    display: none;
+  }
+
+  .speed-cycle {
+    display: block;
+  }
+
+  .route-advice {
+    font-size: 12px;
+  }
+
+  .route-advice {
+    margin-top: 6px;
+  }
+
+  .route-plan {
+    font-size: 12px;
+  }
+
+  .share-key {
+    gap: 2px 12px;
+    font-size: 12px;
+  }
+
+  /* the readout at the top already says what the wind does at the rider's position */
+  .route-point,
+  .advice-text {
+    display: none;
+  }
+
+  .route-chart {
+    height: 72px;
+  }
+
+  .dock:has(.route-panel) .timebar-bars {
+    height: 46px;
+  }
+}
+
+/* a narrow phone has no room for the name of the route beside four buttons: the ride button keeps its icon */
+@media (max-width: 440px) {
+  .route-actions .pill-button {
+    padding: 0 14px;
+  }
+
+  .route-actions .pill-button span {
+    display: none;
+  }
+}
+
+/* short phones: the coloured bar still shows the split; the riding speed stays reachable */
+@media (max-width: 720px) and (max-height: 760px) {
+  .share-key,
+  .route-advice {
+    display: none;
+  }
+
+  .route-chart {
+    height: 64px;
+  }
+}
+
+/* low, wide screens (a phone on its side, a small laptop): the dock moves beside the readout and slims down */
+@media (min-width: 721px) and (max-height: 600px) {
+  .dock {
+    left: calc(292px + 2 * var(--gap) + env(safe-area-inset-left));
+    max-width: none;
+    margin: 0;
+  }
+
+  .readout-stats,
+  .readout-note,
+  .readout-hint,
+  .route-plan,
+  .share-key,
+  .route-advice,
+  .route-point {
+    display: none;
+  }
+
+  .route-chart {
+    height: 56px;
+  }
+
+  .route-point {
+    display: block;
+  }
+
+  .timebar-bars {
+    height: 40px;
+  }
+}
+
+/* fingers and gloves need bigger targets than a mouse */
+@media (pointer: coarse) {
+  .icon-button,
+  .round-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .pill-button {
+    height: 44px;
+    padding: 0 16px;
+  }
+
+  .segmented button {
+    height: 42px;
+    padding: 0 12px;
+  }
+
+  .speed-cycle {
+    height: 44px;
+  }
+
+  .route-plan select {
+    min-height: 40px;
+    padding: 0 6px;
+  }
+
+  .timebar-label .text-button,
+  .readout .text-button,
+  .notice .text-button,
+  .map-status .text-button {
+    padding: 14px 0;
+    margin-top: -14px;
+    margin-bottom: -14px;
+  }
+
+  .readout-save {
+    top: -12px;
+    right: -11px;
+  }
+
+  .timebar-actions .icon-button {
+    margin: -13px -8px -13px 0;
+  }
+
+  .timebar.collapsed .round-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .readout-name input,
+  .readout-name .pill-button {
+    height: 44px;
+  }
+
+  .maplibregl-ctrl-group button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
   }
 }

@@ -1,310 +1,107 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+/* Tokens and page base. The map is the page: everything else floats on top of it. */
 
 :root {
-  /* Color Palette - Premium Dark Tech */
-  --bg-base: #0a0c10;
-  --bg-panel: rgba(18, 20, 29, 0.75);
-  --bg-card: rgba(28, 32, 46, 0.6);
-  --border-color: rgba(255, 255, 255, 0.08);
-  --border-glow: rgba(0, 230, 118, 0.12);
-  --text-primary: #f3f4f6;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
-  
-  /* Severity scale */
-  --color-safe: #00e676;       /* Neon Green - 0-5 km/h */
-  --color-breeze: #81c784;     /* Light Green/Teal - 5-10 km/h */
-  --color-moderate: #ff9100;   /* Warm Orange - 10-15 km/h */
-  --color-dangerous: #ff1744;  /* Hot Coral/Red - >15 km/h */
-
-  /* Global utility classes for text colors */
-.text-safe { color: var(--color-safe); }
-.text-moderate { color: var(--color-moderate); }
-.text-danger { color: var(--color-dangerous); }
-.text-warn { color: var(--color-moderate); }
-  
-  /* Font pairings */
-  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Barlow comes from road signage: wide weights, clear numerals, easy to read at a glance on the bars */
+  --font-sans: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-numerals: 'Barlow Condensed', 'Barlow', system-ui, sans-serif;
+  --gap: 12px;
 
   font-family: var(--font-sans);
-  color: var(--text-primary);
-  background-color: var(--bg-base);
+  color: var(--ink);
+  background-color: var(--page);
+}
+
+/* Night map: deep Atlantic blue rather than neutral black */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #0a1a27;
+  --panel: rgba(9, 23, 33, 0.9);
+  --ink: #eef4f7;
+  --ink-2: #a9bcc7;
+  --ink-3: #7b92a1;
+  --hair: rgba(255, 255, 255, 0.13);
+  --track: rgba(255, 255, 255, 0.08);
+  --inv: #eef4f7;
+  --inv-ink: #0b1b27;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(0, 0, 0, 0.28);
+
+  /* How the wind hits the rider. Set again from JS (mapStyle.js) so map and panels always agree. */
+  --tail: #3987e5;
+  --head: #e66767;
+  --cross: #b4bec6;
+}
+
+/* Day map, for reading in the sun */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --page: #c9dce8;
+  --panel: rgba(255, 255, 255, 0.94);
+  --ink: #0f2230;
+  --ink-2: #44535f;
+  --ink-3: #667583;
+  --hair: rgba(15, 34, 48, 0.15);
+  --track: rgba(15, 34, 48, 0.07);
+  --inv: #0f2230;
+  --inv-ink: #ffffff;
+  --shadow: 0 1px 2px rgba(15, 34, 48, 0.12), 0 10px 28px rgba(15, 34, 48, 0.14);
+
+  --tail: #2a78d6;
+  --head: #e34948;
+  --cross: #87919a;
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-*, *::before, *::after {
-  box-sizing: inherit;
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
 }
 
 body {
-  margin: 0;
-  padding: 0;
-  background-color: var(--bg-base);
-  color: var(--text-primary);
-  overflow-x: hidden;
+  overflow: hidden;
+  background-color: var(--page);
+  color: var(--ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom premium scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: var(--bg-base);
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-safe);
+button,
+select {
+  font: inherit;
+  color: inherit;
 }
 
-#root {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Glassmorphism Styles */
-.glass-panel {
-  background: var(--bg-panel);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-}
-
-.glass-card {
-  background: var(--bg-card);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-  transform: translateY(-2px);
-}
-
-/* Dark mode Leaflet styles */
-.leaflet-container {
-  background-color: #111216 !important;
-  font-family: var(--font-sans) !important;
-}
-
-.leaflet-bar {
-  border: 1px solid var(--border-color) !important;
-  box-shadow: none !important;
-  border-radius: 8px !important;
-  overflow: hidden;
-}
-
-.leaflet-bar a {
-  background-color: var(--bg-panel) !important;
-  border-bottom: 1px solid var(--border-color) !important;
-  color: var(--text-primary) !important;
-  backdrop-filter: blur(8px);
-}
-
-.leaflet-bar a:hover {
-  background-color: rgba(255, 255, 255, 0.1) !important;
-  color: var(--color-safe) !important;
-}
-
-.leaflet-popup-content-wrapper {
-  background: var(--bg-panel) !important;
-  color: var(--text-primary) !important;
-  backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid var(--border-color);
-  border-radius: 12px !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
-}
-
-.leaflet-popup-tip {
-  background: var(--bg-panel) !important;
-  border: 1px solid var(--border-color);
-}
-
-/* Active wind particle animations */
-@keyframes wind-drift {
-  0% {
-    transform: translate(0, 0) scale(1);
-    opacity: 0;
-  }
-  10% {
-    opacity: 0.8;
-  }
-  90% {
-    opacity: 0.8;
-  }
-  100% {
-    transform: translate(150px, 50px) scale(0.8);
-    opacity: 0;
-  }
-}
-
-.wind-particle {
-  position: absolute;
-  background: radial-gradient(circle, rgba(0, 230, 118, 0.4) 0%, transparent 70%);
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 1000;
-}
-
-/* Rotating HUD Compass dial */
-.hud-compass-dial {
-  position: relative;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  border: 4px solid var(--border-color);
-  background: rgba(10, 12, 16, 0.5);
-  box-shadow: inset 0 0 20px rgba(0, 230, 118, 0.05), 0 0 15px rgba(0, 0, 0, 0.3);
-  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.hud-compass-marker {
-  position: absolute;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-secondary);
-}
-
-.hud-compass-marker.n { top: 8px; }
-.hud-compass-marker.e { right: 8px; }
-.hud-compass-marker.s { bottom: 8px; }
-.hud-compass-marker.w { left: 8px; }
-
-/* Large High Contrast Telemetry Display */
-.telemetry-value {
-  font-family: var(--font-mono);
-  font-weight: 800;
-  font-size: 2.5rem;
-  line-height: 1;
-  color: var(--text-primary);
-  letter-spacing: -1px;
-}
-
-.telemetry-unit {
-  font-family: var(--font-sans);
-  font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-left: 2px;
-}
-
-/* Safe wind pill glowing effect */
-.glow-safe {
-  box-shadow: 0 0 10px rgba(0, 230, 118, 0.25);
-  border-color: var(--color-safe) !important;
-}
-
-.glow-moderate {
-  box-shadow: 0 0 10px rgba(255, 145, 0, 0.25);
-  border-color: var(--color-moderate) !important;
-}
-
-.glow-dangerous {
-  box-shadow: 0 0 10px rgba(255, 23, 68, 0.35);
-  border-color: var(--color-dangerous) !important;
-}
-
-/* Interactive custom switch buttons */
-.interactive-switch {
-  display: flex;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border-color);
-  padding: 4px;
-  border-radius: 30px;
-}
-
-.interactive-switch button {
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--text-secondary);
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 6px 14px;
-  border-radius: 20px;
+button {
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.interactive-switch button.active {
-  background: var(--color-safe);
-  color: #000;
-  box-shadow: 0 2px 8px rgba(0, 230, 118, 0.3);
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
-/* Pulsing warning dot */
-.pulsing-dot {
-  width: 8px;
-  height: 8px;
-  background-color: var(--color-dangerous);
-  border-radius: 50%;
-  box-shadow: 0 0 0 0 rgba(255, 23, 68, 0.7);
-  animation: pulse-red 2s infinite;
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
-@keyframes pulse-red {
-  0% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(255, 23, 68, 0.7);
-  }
-  70% {
-    transform: scale(1);
-    box-shadow: 0 0 0 8px rgba(255, 23, 68, 0);
-  }
-  100% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(255, 23, 68, 0);
-  }
+h1,
+h2,
+p,
+dl,
+dd,
+ul {
+  margin: 0;
+  padding: 0;
 }
 
-/* Live pulsing green status dot */
-.live-dot-pulse {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  background-color: var(--color-safe);
-  border-radius: 50%;
-  box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.7);
-  animation: pulse-green 1.8s infinite;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
-@keyframes pulse-green {
-  0% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.7);
-  }
-  70% {
-    transform: scale(1);
-    box-shadow: 0 0 0 6px rgba(0, 230, 118, 0);
-  }
-  100% {
-    transform: scale(0.95);
-    box-shadow: 0 0 0 0 rgba(0, 230, 118, 0);
-  }
-}
-
-.live-active-btn {
-  background: rgba(0, 230, 118, 0.1) !important;
-  border: 1px solid var(--color-safe) !important;
-  color: var(--color-safe) !important;
-  box-shadow: 0 0 10px rgba(0, 230, 118, 0.15) !important;
+ul {
+  list-style: none;
 }

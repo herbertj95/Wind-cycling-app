@@ -1,306 +1,115 @@
-// Open-Meteo Weather API Integration for Lisbon Metropolitan Area
-// Bounding box: Approx. Lat 38.5°N to 39.0°N, Lng -9.5°W to -9.0°W
+// Open-Meteo: the hourly forecast for any list of points, and the search for places by name.
+// Nothing here knows about the map: windStore decides which points to ask for and keeps the answers.
+import { timeoutSignal } from './net';
 
-// 25 Bounding grid coordinates in Lisbon for Arrow Grid Overlay
-export const LISBON_GRID_POINTS = (() => {
-  const lats = [38.5, 38.625, 38.75, 38.875, 39.0];
-  const lngs = [-9.5, -9.375, -9.25, -9.125, -9.0];
-  const list = [];
-  lats.forEach(lat => {
-    lngs.forEach(lng => {
-      list.push({ lat, lng });
-    });
-  });
-  return list;
-})();
+const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+const SEARCH_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+const FIELDS = ['temperature_2m', 'apparent_temperature', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'];
+// Hours asked for, counted from the hour in progress: a few back, so the time bar shows how the wind got
+// here, and two days ahead.
+const PAST_HOURS = 3;
+const FORECAST_HOURS = 49;
+const HOUR = 3600;
 
-// Spot coordinates (Lisbon microclimates)
-export const MICROCLIMATE_SPOTS = [
-  {
-    id: 'lisbon',
-    name: 'Lisbon Central',
-    desc: 'The historic metropolitan center, moderately sheltered by urban topography but highly exposed along the waterfront trade-wind lines.',
-    lat: 38.73,
-    lng: -9.14,
-    windMultiplier: 1.0,
-    tempOffset: 0,
-    isSheltered: true,
-    rimWarning: false,
-  },
-  {
-    id: 'guincho',
-    name: 'Guincho / Cabo da Roca',
-    desc: 'Exposed Atlantic cliffs, infamous for high speed gale-force headwinds.',
-    lat: 38.73,
-    lng: -9.47,
-    windMultiplier: 1.6, // Stronger coastal wind factor
-    tempOffset: -2,      // Wind-chill and Atlantic cold
-    isSheltered: false,
-    rimWarning: true,
-  },
-  {
-    id: 'marginal',
-    name: 'Estrada Marginal',
-    desc: 'Tagus river cycle artery, highly vulnerable to tricky side crosswinds.',
-    lat: 38.69,
-    lng: -9.31,
-    windMultiplier: 1.1,
-    tempOffset: 0,
-    isSheltered: false,
-    rimWarning: false,
-  },
-  {
-    id: 'sintra',
-    name: 'Serra de Sintra (Peninha)',
-    desc: 'Mountainous terrain with severe gust microclimates and heavy drafts.',
-    lat: 38.78,
-    lng: -9.42,
-    windMultiplier: 1.4,
-    tempOffset: -4, // Mountain cooling
-    isSheltered: false,
-    rimWarning: true,
-  },
-  {
-    id: 'monsanto',
-    name: 'Monsanto Forest Park',
-    desc: 'Densely forested hill climbs offering excellent cover from wind.',
-    lat: 38.73,
-    lng: -9.19,
-    windMultiplier: 0.5, // Sheltered by canopy
-    tempOffset: 1,       // Retained inland warmth
-    isSheltered: true,
-    rimWarning: false,
-  },
-  {
-    id: 'vasco_gama',
-    name: 'Ponte Vasco da Gama',
-    desc: 'Long flat salt marsh estuary path, completely unprotected from cross-gusts.',
-    lat: 38.79,
-    lng: -9.09,
-    windMultiplier: 1.3,
-    tempOffset: -1,
-    isSheltered: false,
-    rimWarning: true,
-  },
-  {
-    id: 'povoa',
-    name: 'Póvoa de Santa Iria',
-    desc: 'Flat riverbed cycle route, prone to relentless head-on river winds.',
-    lat: 38.86,
-    lng: -9.05,
-    windMultiplier: 1.2,
-    tempOffset: 0,
-    isSheltered: false,
-    rimWarning: false,
-  },
-  {
-    id: 'caparica',
-    name: 'Costa da Caparica',
-    desc: 'Exposed sandy coast south of the river. Steady marine breezes.',
-    lat: 38.64,
-    lng: -9.24,
-    windMultiplier: 1.2,
-    tempOffset: -1,
-    isSheltered: false,
-    rimWarning: false,
-  },
-  {
-    id: 'arrabida',
-    name: 'Serra da Arrábida',
-    desc: 'Dramatic steep cliff climbs with ocean thermal drafts and sheer drops.',
-    lat: 38.48,
-    lng: -9.01,
-    windMultiplier: 1.3,
-    tempOffset: -2,
-    isSheltered: false,
-    rimWarning: true,
-  }
-];
+const finite = Number.isFinite;
 
-// Fallback high-fidelity weather database in case of API failure / offline
-const getMockWeather = (windPreset = 'nortada') => {
-  // Preset 1: Nortada (Strong North wind - typical summer pattern in Lisbon)
-  // Preset 2: Calm / Gentle breeze
-  // Preset 3: South storm gusts
-  let baseWindSpeed = 18; // km/h
-  let baseWindDir = 340;  // NNW (blowing FROM NNW)
-  let baseWindGusts = 28; // km/h
-  let baseTemp = 21;      // °C
-  
-  if (windPreset === 'calm') {
-    baseWindSpeed = 6;
-    baseWindDir = 240; // Gentle SW
-    baseWindGusts = 9;
-    baseTemp = 24;
-  } else if (windPreset === 'storm') {
-    baseWindSpeed = 29;
-    baseWindDir = 190; // Strong South gusts
-    baseWindGusts = 45;
-    baseTemp = 16;
-  }
-
-  return LISBON_GRID_POINTS.map((pt, index) => {
-    // Generate realistic variance across Lisbon microclimates
-    // West areas (Guincho, Lng -9.47) get stronger wind
-    // Inland/forest areas (Monsanto) get sheltered
-    // Estuary/flat (Vasco da Gama, Lng -9.09) get steady strong river breeze
-    
-    let multiplier = 1.0;
-    let dirSkew = (Math.sin(pt.lat * 50) + Math.cos(pt.lng * 50)) * 10; // Slight local direction changes
-    
-    // Coastal West (Cabo da Roca / Guincho)
-    if (pt.lng < -9.4) {
-      multiplier = 1.4;
+async function httpError(response) {
+  const error = new Error(`Open-Meteo answered ${response.status}`);
+  error.status = response.status;
+  if (response.status === 429) {
+    // the answer says which allowance ran out: the one per minute, per hour or per day
+    let reason = '';
+    try {
+      reason = String((await response.json()).reason ?? '');
+    } catch {
+      // no readable reason: treat it as the shortest wait
     }
-    // Deep estuary East
-    else if (pt.lng > -9.15) {
-      multiplier = 1.1;
-    }
-    // Inland/Center
-    else {
-      multiplier = 0.8;
-    }
-
-    const windSpeed = Math.round(baseWindSpeed * multiplier * (0.9 + (index % 5) * 0.05));
-    const windDir = Math.round((baseWindDir + dirSkew + 360) % 360);
-    const windGusts = Math.round(baseWindGusts * multiplier * (0.95 + (index % 3) * 0.05));
-    
-    // Feels like calculates from wind-chill index (simplified formula for 10m wind speed)
-    // Wind-chill is prominent at lower temperatures and higher wind speeds
-    const apparentTemp = Math.round(baseTemp - (windSpeed * 0.12));
-
-    return {
-      lat: pt.lat,
-      lng: pt.lng,
-      windSpeed,
-      windDir,
-      windGusts,
-      temp: baseTemp,
-      apparentTemp,
-      relativeHumidity: 65 + (index % 4) * 3,
-    };
-  });
-};
-
-/**
- * Fetches current weather values for the entire Lisbon grid from Open-Meteo
- * Fallback values are generated if API fails or rate-limits occur.
- */
-export async function fetchLisbonGridWeather(windPreset = 'live', hourOffset = 0) {
-  // If the user selected a simulated planning pattern, skip live API query entirely
-  if (windPreset !== 'live') {
-    return getMockWeather(windPreset);
+    error.limit = /daily/i.test(reason) ? 'day' : /hourly/i.test(reason) ? 'hour' : 'minute';
   }
+  return error;
+}
 
-  // Live real-time mode: query Open-Meteo directly
-  try {
-    const latsParam = LISBON_GRID_POINTS.map(p => p.lat).join(',');
-    const lngsParam = LISBON_GRID_POINTS.map(p => p.lng).join(',');
-    
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latsParam}&longitude=${lngsParam}&hourly=temperature_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,wind_gusts_10m,relative_humidity_2m&forecast_days=2`;
-    
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Open-Meteo status: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    // If it's single coordinate result array vs multi array
-    const results = Array.isArray(data) ? data : [data];
-    
-    const now = new Date();
-    const currentHourStr = now.toISOString().substring(0, 14) + '00';
-    
-    return LISBON_GRID_POINTS.map((pt, i) => {
-      const forecast = results[i];
-      if (!forecast || !forecast.hourly) {
-        throw new Error('Malformed Open-Meteo grid response');
-      }
-      
-      let timeIndex = forecast.hourly.time.findIndex(t => t === currentHourStr);
-      if (timeIndex === -1) timeIndex = 0;
-      
-      timeIndex += hourOffset;
-      if (timeIndex >= forecast.hourly.time.length) {
-        timeIndex = forecast.hourly.time.length - 1;
-      }
-      
-      return {
-        lat: pt.lat,
-        lng: pt.lng,
-        windSpeed: Math.round(forecast.hourly.wind_speed_10m[timeIndex]),
-        windDir: Math.round(forecast.hourly.wind_direction_10m[timeIndex]),
-        windGusts: Math.round(forecast.hourly.wind_gusts_10m[timeIndex]),
-        temp: Math.round(forecast.hourly.temperature_2m[timeIndex]),
-        apparentTemp: Math.round(forecast.hourly.apparent_temperature[timeIndex]),
-        relativeHumidity: Math.round(forecast.hourly.relative_humidity_2m[timeIndex]),
-        isRealTime: true,
-        forecastTime: forecast.hourly.time[timeIndex]
-      };
-    });
-  } catch (error) {
-    console.warn('API Error in Live mode, falling back to simulated Nortada:', error.message);
-    // Return simulated Nortada but flag it as fallback
-    return getMockWeather('nortada').map(pt => ({
-      ...pt,
-      isFallback: true
-    }));
+// One location of the answer as a forecast point: `n` hourly values starting at unix time `t0`.
+function toPoint(location, fetchedAt) {
+  const h = location?.hourly;
+  const times = h?.time;
+  if (!Array.isArray(times) || times.length === 0 || FIELDS.some((f) => !Array.isArray(h[f]) || h[f].length !== times.length)) {
+    throw new Error('Unexpected forecast response');
   }
+  if (!finite(times[0]) || (times.length > 1 && times[1] - times[0] !== HOUR)) {
+    throw new Error('Unexpected forecast response');
+  }
+  // Open-Meteo sends null where a model has no value. Only the hours before the first one without wind are
+  // kept, so a hole in the data can never be drawn as "0 km/h, calm".
+  let n = 0;
+  while (n < times.length && finite(h.wind_speed_10m[n]) && finite(h.wind_direction_10m[n]) && finite(h.wind_gusts_10m[n])) n++;
+  return {
+    t0: times[0],
+    n,
+    speed: h.wind_speed_10m.slice(0, n),
+    dir: h.wind_direction_10m.slice(0, n),
+    gust: h.wind_gusts_10m.slice(0, n),
+    temp: h.temperature_2m.slice(0, n),
+    feels: h.apparent_temperature.slice(0, n),
+    zone: typeof location.timezone === 'string' ? location.timezone : null,
+    fetchedAt,
+  };
 }
 
 /**
- * Finds the weather attributes at a specific location by interpolating from the grid
+ * Fetches the hourly forecast for a list of positions ({ lat, lng }) in one request.
+ * Returns one forecast point per position, in the same order:
+ * { t0, n, speed[], dir[], gust[], temp[], feels[], zone, fetchedAt }, where `n` may be 0 when a position has no wind data.
+ * Throws when the request fails: callers decide what to show, nothing is invented.
+ * Each position counts as one call against Open-Meteo's free allowance.
  */
-export function getInterpolatedWeather(lat, lng, gridWeather) {
-  if (!gridWeather || gridWeather.length === 0) {
-    return {
-      windSpeed: 15,
-      windDir: 340,
-      windGusts: 22,
-      temp: 20,
-      apparentTemp: 18,
-      relativeHumidity: 60
-    };
-  }
+export async function fetchPoints(points) {
+  const params = new URLSearchParams({
+    latitude: points.map((p) => p.lat).join(','),
+    longitude: points.map((p) => p.lng).join(','),
+    hourly: FIELDS.join(','),
+    past_hours: String(PAST_HOURS),
+    forecast_hours: String(FORECAST_HOURS),
+    timeformat: 'unixtime',
+    // each point also says which time zone it is in, so times can be shown in the local time of the place
+    timezone: 'auto',
+    // each point takes the model cell it sits in (the default prefers a land cell, which can be kilometres away)
+    cell_selection: 'nearest',
+  });
+  const response = await fetch(`${FORECAST_URL}?${params}`, { signal: timeoutSignal(15000) });
+  if (!response.ok) throw await httpError(response);
+  const json = await response.json();
+  // a single position is answered with a bare object instead of a list
+  const locations = Array.isArray(json) ? json : [json];
+  if (locations.length !== points.length) throw new Error('Unexpected forecast response');
+  const fetchedAt = Date.now();
+  return locations.map((location) => toPoint(location, fetchedAt));
+}
 
-  // Find the nearest point in the grid using simple Euclidean distance
-  let nearestPoint = null;
-  let minDistance = Infinity;
-
-  for (const pt of gridWeather) {
-    const dLat = pt.lat - lat;
-    const dLng = pt.lng - lng;
-    const dist = dLat * dLat + dLng * dLng;
-    if (dist < minDistance) {
-      minDistance = dist;
-      nearestPoint = pt;
-    }
-  }
-
-  // Apply microclimate scaling factors based on nearby spots (within 2km)
-  let speedMultiplier = 1.0;
-  let tempOffset = 0;
-  
-  for (const spot of MICROCLIMATE_SPOTS) {
-    const dLat = spot.lat - lat;
-    const dLng = spot.lng - lng;
-    const distKm = Math.sqrt(dLat * dLat + dLng * dLng) * 111; // 1 degree lat ~ 111km
-    
-    if (distKm < 2.5) { // within 2.5 km of a specific spot
-      // Blend factor based on proximity
-      const blend = (2.5 - distKm) / 2.5;
-      speedMultiplier = 1.0 + (spot.windMultiplier - 1.0) * blend;
-      tempOffset = spot.tempOffset * blend;
-      break;
-    }
-  }
-
-  return {
-    ...nearestPoint,
-    windSpeed: Math.round(nearestPoint.windSpeed * speedMultiplier),
-    windGusts: Math.round(nearestPoint.windGusts * speedMultiplier),
-    temp: Math.round(nearestPoint.temp + tempOffset),
-    apparentTemp: Math.round(nearestPoint.apparentTemp + tempOffset),
-  };
+/**
+ * Places whose name matches `query`, best match first: [{ id, name, region, lat, lng, zone }].
+ * `region` tells two places with the same name apart, e.g. "Catalonia, Spain". When two of them are in
+ * the same region as well, the district is added in front.
+ * `signal` cancels the search, for when the query has changed meanwhile.
+ */
+export async function searchPlaces(query, signal) {
+  const params = new URLSearchParams({ name: query, count: '6', language: 'en', format: 'json' });
+  const response = await fetch(`${SEARCH_URL}?${params}`, { signal: timeoutSignal(10000, signal) });
+  if (!response.ok) throw await httpError(response);
+  const json = await response.json();
+  const results = (Array.isArray(json?.results) ? json.results : []).filter(
+    (r) => r && typeof r.name === 'string' && finite(r.latitude) && finite(r.longitude),
+  );
+  const regionOf = (r, ...closer) => [...new Set([...closer, r.admin1, r.country])].filter((part) => part && part !== r.name).join(', ');
+  const labelOf = (r) => `${r.name}|${regionOf(r)}`;
+  const timesSeen = new Map();
+  results.forEach((r) => timesSeen.set(labelOf(r), (timesSeen.get(labelOf(r)) ?? 0) + 1));
+  return results.map((r, i) => ({
+    id: r.id ?? `result-${i}`,
+    name: r.name,
+    region: timesSeen.get(labelOf(r)) > 1 ? regionOf(r, r.admin3, r.admin2) : regionOf(r),
+    lat: r.latitude,
+    lng: r.longitude,
+    zone: typeof r.timezone === 'string' ? r.timezone : null,
+  }));
 }
