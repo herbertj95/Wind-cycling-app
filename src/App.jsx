@@ -7,6 +7,7 @@ import RoutePanel from './components/RoutePanel';
 import RoutesMenu from './components/RoutesMenu';
 import PlacesMenu from './components/PlacesMenu';
 import { useWind, useNow } from './hooks/useWind';
+import { useSystemBars } from './hooks/useSystemBars';
 import { STALE_MS } from './utils/windStore';
 import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds } from './utils/lattice';
 import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
@@ -705,6 +706,9 @@ export default function App() {
       // the choice just will not be remembered
     }
   }, [theme]);
+
+  // on a phone, the clock and the icons of the status bar are drawn to be read on the map shown
+  useSystemBars(theme);
 
   // the place or point in focus is where the readout starts next time
   useEffect(() => {
