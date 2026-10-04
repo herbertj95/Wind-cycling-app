@@ -193,6 +193,37 @@ describe('downloading what is needed', () => {
     expect(service.calls[1]).toHaveLength(fine.length - coarse.length);
   });
 
+  it('does not make a new need wait for a slow request that is under way', async () => {
+    let release;
+    service.gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    // the view is asked for, in two requests, and the service takes its time
+    store.want('view', row(87, 200));
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(2);
+
+    // a route is opened meanwhile: what it needs beyond the view goes out at once
+    service.gate = null;
+    const route = [...row(10, 200), ...row(6, 210)];
+    store.want('route', route);
+    await settle();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
+    expect(service.calls[2]).toEqual(positions(row(6, 210)));
+    // and so does a view the map has moved on to, once it has settled
+    store.want('view', []);
+    await settle(1000);
+    store.want('view', [...row(40, 200), ...row(5, 220)], 350);
+    await settle(400);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(4);
+    expect(service.calls[3]).toEqual(positions(row(5, 220)));
+
+    release();
+    await settle();
+    expect(store.getSnapshot().state(route)).toBe('ready');
+    expect(service.fetchPoints).toHaveBeenCalledTimes(4);
+  });
+
   it('never asks for a point beyond the poles', async () => {
     store.want('focus', [{ level: 0, row: 721, col: 0 }, { level: 5, row: -23, col: 0 }, { level: 0, row: 720, col: 0 }]);
     await settle();
@@ -297,19 +328,46 @@ describe('keeping the forecast fresh', () => {
 });
 
 describe('staying inside the allowance of the service', () => {
-  it('splits a large need into requests of at most 100 positions, three at a time', async () => {
+  it('splits a large need into requests of at most 50 positions, four at a time', async () => {
     let release;
     service.gate = new Promise((resolve) => {
       release = resolve;
     });
-    store.want('view', row(350));
+    store.want('view', row(330));
     await settle();
-    expect(service.calls.map((c) => c.length)).toEqual([100, 100, 100]);
+    expect(service.calls.map((c) => c.length)).toEqual([50, 50, 50, 50]);
 
     release();
     await settle();
-    expect(service.calls.map((c) => c.length)).toEqual([100, 100, 100, 50]);
-    expect(new Set(service.calls.flat().map((p) => `${p.lat},${p.lng}`)).size).toBe(350);
+    expect(service.calls.map((c) => c.length)).toEqual([50, 50, 50, 50, 50, 50, 30]);
+    expect(new Set(service.calls.flat().map((p) => `${p.lat},${p.lng}`)).size).toBe(330);
+  });
+
+  it('shows the part of a view that has arrived while another part is slow', async () => {
+    // the second request of the view hangs; the first one is answered
+    let release;
+    const slow = new Promise((resolve) => {
+      release = resolve;
+    });
+    const fetchPoints = service.fetchPoints;
+    let call = 0;
+    const flaky = vi.fn(async (list) => {
+      call++;
+      if (call === 2) await slow;
+      return fetchPoints(list);
+    });
+    store.destroy();
+    store = createWindStore({ fetchPoints: flaky, storage });
+    const view = row(80, 200);
+    store.want('view', view);
+    await settle();
+    const wind = store.getSnapshot();
+    expect(wind.state(view)).toBe('loading');
+    expect(wind.state(view.slice(0, 50))).toBe('ready');
+
+    release();
+    await settle();
+    expect(store.getSnapshot().state(view)).toBe('ready');
   });
 
   it('asks for no more than 400 positions in a minute and for the rest afterwards', async () => {
@@ -541,22 +599,29 @@ describe('when a download fails', () => {
   });
 
   it('counts an attempt once, however many requests it took', async () => {
-    // 250 positions are three requests; all three fail in the same outage
+    // 250 positions are five requests; all five fail in the same outage
     service.fail = new TypeError('Failed to fetch');
     store.want('view', row(250));
     await settle();
-    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(5);
 
-    // the second attempt comes after 15 seconds, not after the minute that three failures would mean
+    // The second attempt comes after 15 seconds, not after the minutes that five failures would mean.
+    // It is the four requests that go out side by side; the rest follows once the service answers.
     await settle(14000);
-    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
-    await settle(1500);
-    expect(service.fetchPoints).toHaveBeenCalledTimes(6);
-    // and the third after 30 more
-    await settle(29000);
-    expect(service.fetchPoints).toHaveBeenCalledTimes(6);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(5);
     await settle(1500);
     expect(service.fetchPoints).toHaveBeenCalledTimes(9);
+    // and the third after 30 more
+    await settle(29000);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(9);
+    await settle(1500);
+    expect(service.fetchPoints).toHaveBeenCalledTimes(13);
+
+    // the outage is over: the next attempt gets all of it, without another wait for the part beyond four requests
+    service.fail = null;
+    await settle(60000);
+    expect(store.getSnapshot().state(row(250))).toBe('ready');
+    expect(store.getSnapshot().problem).toBeNull();
   });
 
   it('waits out the allowance that ran out: over a minute for the one per minute', async () => {
@@ -701,18 +766,47 @@ describe('when a download fails', () => {
     expect(store.getSnapshot().problem).toBeNull();
   });
 
-  it('does not let one failed area hide that another one loaded', async () => {
+  it('asks again for what failed as soon as the service answers something else', async () => {
     service.fail = new TypeError('Failed to fetch');
     store.want('view', row(20));
     await settle();
+    expect(store.getSnapshot().state(row(20))).toBe('failed');
+
+    // the connection is back, and a place is tapped before the wait for the view is over
     service.fail = null;
+    store.want('focus', LISBON);
+    await settle();
+    const wind = store.getSnapshot();
+    expect(wind.state(LISBON)).toBe('ready');
+    expect(wind.state(row(20))).toBe('ready');
+    expect(wind.problem).toBeNull();
+    expect(service.fetchPoints).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not let one failed area hide that another one loaded, nor hammer the one that keeps failing', async () => {
+    // the service answers everything except the request for the view
+    const fetchPoints = service.fetchPoints;
+    const picky = vi.fn(async (list) => {
+      if (list.length === 20) throw httpError(500);
+      return fetchPoints(list);
+    });
+    store.destroy();
+    store = createWindStore({ fetchPoints: picky, storage });
+    store.want('view', row(20));
+    await settle();
     store.want('focus', LISBON);
     await settle();
     const wind = store.getSnapshot();
     expect(wind.state(LISBON)).toBe('ready');
     // the view is still missing, so the problem stands
     expect(wind.state(row(20))).toBe('failed');
-    expect(wind.problem).toEqual({ kind: 'offline' });
+    expect(wind.problem).toEqual({ kind: 'service' });
+    // it was tried once more when the other request went through, and then left to its wait
+    expect(picky).toHaveBeenCalledTimes(3);
+    await settle(10000);
+    expect(picky).toHaveBeenCalledTimes(3);
+    await settle(6000);
+    expect(picky).toHaveBeenCalledTimes(4);
   });
 });
 

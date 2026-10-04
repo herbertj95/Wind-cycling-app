@@ -7,9 +7,11 @@ const MINUTE = 60000;
 const HOUR = 3600000;
 /** A point older than this is downloaded again the next time it is needed. */
 export const STALE_MS = HOUR;
-// positions per request, and requests under way at once
-const CHUNK = 100;
-const MAX_REQUESTS = 3;
+// Positions per request, and requests under way at once. A map view is two or three requests side by
+// side: the free service now and then takes seconds over one answer, and that should hold up a part of
+// the map, not all of it.
+const CHUNK = 50;
+const MAX_REQUESTS = 4;
 // Open-Meteo's free allowance is 600 positions a minute and 5,000 an hour for one address. Staying well
 // under both leaves room for the place search and for other apps behind the same address.
 const PER_MINUTE = 400;
@@ -73,11 +75,9 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
   const listeners = new Set();
   let version = 0;
   let requests = 0;
-  // Failed attempts in a row. An attempt is everything asked for in one go: it can be several requests,
-  // which fail together in one outage and count once.
+  // Failed attempts in a row, and when the next one is due. The requests of one attempt fail together
+  // in one outage: only the first failure after the wait is over counts.
   let failures = 0;
-  let attempts = 0;
-  let failedAttempt = 0;
   let retryAt = 0;
   let problem = null;
   // While the service says its allowance ran out, nothing is asked of it. This outlives the needs that
@@ -243,7 +243,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     return { minute: PER_MINUTE - lastMinute, hour: PER_HOUR - lastHour };
   }
 
-  function send(batch, t, attempt) {
+  function send(batch, t) {
     requests++;
     const charge = [t, batch.length];
     spent.push(charge);
@@ -262,19 +262,19 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
           });
           trim();
           refreshLevels();
+          // the service is answering: whatever failed before need not wait any longer
           failures = 0;
+          retryAt = 0;
           limitUntil = 0;
           if (failed.size === 0) problem = null;
           if (!destroyed) scheduleSave();
         },
         (error) => {
           batch.forEach(([key]) => failed.add(key));
-          if (attempt > failedAttempt) {
-            failedAttempt = attempt;
-            failures++;
-          }
+          const failedAt = now();
+          if (failedAt >= retryAt) failures++;
           problem = describe(error);
-          retryAt = now() + retryDelay(problem, failures);
+          retryAt = failedAt + retryDelay(problem, failures);
           if (problem.kind === 'limit') {
             limitUntil = retryAt;
             limitProblem = problem;
@@ -350,12 +350,10 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
 
     const room = allowance(t);
     let free = Math.min(room.minute, room.hour);
-    let attempt = 0;
     while (need.length > 0 && requests < MAX_REQUESTS && free > 0) {
       const batch = need.splice(0, Math.min(CHUNK, free));
       free -= batch.length;
-      attempt = attempt || ++attempts;
-      send(batch, t, attempt);
+      send(batch, t);
       changed = true;
     }
 
