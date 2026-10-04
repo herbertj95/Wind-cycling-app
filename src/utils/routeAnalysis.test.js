@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyseRoute, bandScale, RIDE_SPEEDS } from './routeAnalysis';
+import { analyseRoute, bandScale, windPeaks, RIDE_SPEEDS } from './routeAnalysis';
 import { nodeKey } from './lattice';
 import { pointAt, blendAt } from './windField';
 import { angleDiff, windComponents } from './wind';
@@ -92,6 +92,35 @@ describe('RIDE_SPEEDS', () => {
       expect(kmh).toBeGreaterThan(0);
       if (i > 0) expect(kmh).toBeGreaterThan(RIDE_SPEEDS[i - 1]);
     });
+  });
+});
+
+describe('windPeaks', () => {
+  const heads = (...values) => values.map((head) => ({ head }));
+
+  it('gives the strongest headwind and the strongest tailwind, both as positive km/h', () => {
+    expect(windPeaks(heads(3, 12.4, -8, 5, -2))).toEqual({ head: 12.4, tail: 8 });
+    expect(windPeaks(heads(-31, 6))).toEqual({ head: 6, tail: 31 });
+  });
+
+  it('is zero for the way the wind never blows', () => {
+    expect(windPeaks(heads(4, 9, 0.5))).toEqual({ head: 9, tail: 0 });
+    expect(windPeaks(heads(-4, -9))).toEqual({ head: 0, tail: 9 });
+    expect(windPeaks(heads(0, 0))).toEqual({ head: 0, tail: 0 });
+    expect(windPeaks([])).toEqual({ head: 0, tail: 0 });
+  });
+
+  it('skips points without a reading', () => {
+    expect(windPeaks(heads(12, NaN, undefined, -18))).toEqual({ head: 12, tail: 18 });
+  });
+
+  it('matches an analysed route: against the wind one way, with it on the way back', () => {
+    const out = windPeaks(analyseRoute(northbound(), steady(20, 0, 30), 0, 25).wind);
+    expect(out.head).toBeCloseTo(20, 5);
+    expect(out.tail).toBe(0);
+    const back = windPeaks(analyseRoute(northbound(), steady(20, 180, 30), 0, 25).wind);
+    expect(back.head).toBe(0);
+    expect(back.tail).toBeCloseTo(20, 5);
   });
 });
 

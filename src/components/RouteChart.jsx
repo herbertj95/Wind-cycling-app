@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { bandScale } from '../utils/routeAnalysis';
+import { bandScale, windPeaks } from '../utils/routeAnalysis';
 
 // Kilometres moved by PageUp / PageDown
 const PAGE_KM = 5;
-// Below this height in px the two labels of the wind scale would print over each other
-const MIN_LABELLED_BAND = 24;
+// Height in px kept free for a line of text, above the wind band and under it
+const LABEL_ROOM = 14;
+// The profile is never lower than this many px: its line would run through the label of its highest point
+const MIN_PROFILE = 20;
 
 /**
  * Two charts sharing the distance axis: the elevation profile and, below it, the wind along the route.
- * Above the line the wind is against the rider, below it the wind is helping. The two ends of that
- * scale carry their value on the axis side ("15 km/h") and their meaning at the far end ("headwind").
+ * Above the line the wind is against the rider, below it the wind is helping. A hairline marks the
+ * strongest wind each way, with its value written beside it ("headwind up to 12 km/h").
  * Drag along it (or use the arrow keys) to ride the route.
  * - wind: per-point analysis from analyseRoute, parallel to route.points; leave it out to draw the profile alone
  * - valueText: what the current position is, in words, for screen readers
@@ -33,11 +35,11 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
   const total = route.totalDistance || 1;
 
   const shape = useMemo(() => {
-    // Without wind the profile takes the whole height. With it, the wind band gets the larger share:
-    // its height is what gets read off against the scale.
-    const elevationHeight = wind ? height * 0.4 : height - 16;
-    const windTop = elevationHeight + 10;
-    const windHeight = height - windTop - 14;
+    // Without wind the profile takes the whole height. With it, the two halve what is left once the
+    // labels of the strongest winds have their room, above the band and under it.
+    const elevationHeight = wind ? Math.max(MIN_PROFILE, (height - 2 * LABEL_ROOM) / 2) : height - 16;
+    const windTop = elevationHeight + LABEL_ROOM;
+    const windHeight = Math.max(0, height - windTop - LABEL_ROOM);
     const baseline = windTop + windHeight / 2;
 
     let eleMin = Infinity;
@@ -54,18 +56,25 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
 
     let head = null;
     let tail = null;
-    // the km/h at the top and at the bottom of the wind band
-    const windMax = wind ? bandScale(wind) : 0;
+    let peaks = null;
     if (wind) {
-      const windScale = (windHeight / 2) / windMax;
+      const windScale = (windHeight / 2) / bandScale(wind);
       // one closed band per sign: +1 keeps the headwind part above the baseline, -1 the tailwind part below
       const band = (sign) =>
         `M0 ${baseline}${points.map((p, i) => `L${x(p).toFixed(1)} ${(baseline - Math.max(0, sign * wind[i].head) * windScale * sign).toFixed(1)}`).join('')}L${width} ${baseline}Z`;
       head = band(1);
       tail = band(-1);
+      // the strongest wind each way in km/h, and the height in the band where it is reached
+      const strongest = windPeaks(wind);
+      peaks = {
+        head: Math.round(strongest.head),
+        tail: Math.round(strongest.tail),
+        headY: baseline - strongest.head * windScale,
+        tailY: baseline + strongest.tail * windScale,
+      };
     }
 
-    return { elevationHeight, windTop, windHeight, windMax, baseline, eleMax, profile, head, tail, x, yEle };
+    return { elevationHeight, windTop, windHeight, baseline, eleMax, profile, head, tail, peaks, x, yEle };
   }, [points, wind, total, width, height]);
 
   const scrub = (clientX) => {
@@ -135,22 +144,24 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
           <path d={shape.head} fill={headColor} />
           <path d={shape.tail} fill={tailColor} />
           <line x1="0" x2={width} y1={shape.baseline} y2={shape.baseline} stroke="var(--ink-3)" strokeWidth="1" />
-          {/* The two ends of the scale: a hairline each, with how much wind the full height is at the
-              axis end and which way it blows at the other. */}
-          {shape.windHeight >= MIN_LABELLED_BAND && (
-            <>
-              <line x1="0" x2={width} y1={shape.windTop} y2={shape.windTop} stroke="var(--hair)" strokeWidth="1" />
-              <line x1="0" x2={width} y1={shape.windTop + shape.windHeight} y2={shape.windTop + shape.windHeight} stroke="var(--hair)" strokeWidth="1" />
-              <text x="4" y={shape.windTop + 11}>{shape.windMax} km/h</text>
-              <text x="4" y={shape.windTop + shape.windHeight - 3}>{shape.windMax} km/h</text>
-              <text x={width - 2} y={shape.windTop + 11} textAnchor="end">headwind</text>
-              <text x={width - 2} y={shape.windTop + shape.windHeight - 3} textAnchor="end">tailwind</text>
-            </>
+          {/* The strongest wind each way: a hairline at the height it reaches and its value on the far
+              side of that line from the band, where nothing is drawn. */}
+          {shape.peaks.head > 0 && (
+            <line x1="0" x2={width} y1={shape.peaks.headY} y2={shape.peaks.headY} stroke="var(--hair)" strokeWidth="1" />
           )}
+          {shape.peaks.tail > 0 && (
+            <line x1="0" x2={width} y1={shape.peaks.tailY} y2={shape.peaks.tailY} stroke="var(--hair)" strokeWidth="1" />
+          )}
+          <text x="4" y={shape.peaks.headY - 4}>
+            {shape.peaks.head > 0 ? `headwind up to ${shape.peaks.head} km/h` : 'no headwind'}
+          </text>
+          <text x="4" y={shape.peaks.tailY + 12}>
+            {shape.peaks.tail > 0 ? `tailwind up to ${shape.peaks.tail} km/h` : 'no tailwind'}
+          </text>
         </>
       )}
 
-      <text x="0" y={height - 1}>0 km</text>
+      {/* the bottom left corner is left to the tailwind label, which comes down to it in a strong tailwind */}
       <text x={width} y={height - 1} textAnchor="end">{Math.round(total)} km</text>
 
       <line x1={cursorX} x2={cursorX} y1="0" y2={cursorBottom} stroke="var(--ink)" strokeWidth="1.5" />
