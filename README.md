@@ -10,10 +10,12 @@ The map is the whole screen. The wind is drawn on top of it wherever you take th
 
 * **🗺️ Wind map**: the wind moves across the map as white streaks, and arrows carry the speed in km/h. Arrows get longer as the wind gets stronger and always point the way the wind is blowing.
 * **🌍 Anywhere**: move the map or use **Search** to find a town, and the forecast follows. Tap any point to read its wind.
+* **🧭 Names to find your way**: road numbers and summits with their height from a regional view; zoomed in to street level, street names and landmarks such as monuments, museums, stadiums, viewpoints and stations.
 * **📍 Your places**: places are labelled on the map with their current wind. The app starts with nine riding spots around Lisbon (Guincho, Marginal, Sintra, Arrábida and others); save any searched or tapped point with the bookmark in the readout, and remove the ones you do not need.
 * **🕒 Time bar**: 48 hours of forecast for the place you are looking at, in the local time of that place. Drag it or press play. The map follows without reloading.
 * **📊 Route analysis**: open your own GPX file from anywhere, or one of the bundled routes around Lisbon. The route is coloured by what the wind does to you: blue pushes, red slows, grey barely matters. Each point is checked at the time you would get there, for the riding speed you choose. Ferry crossings and other gaps in a recording are not counted as ridden.
 * **🚴 Ride it**: move along the elevation profile, or press *Ride it*, and the rider on the map shows your heading and where the wind hits you.
+* **↕️ More map when you want it**: the time bar and the route details each fold down to one line with the small arrow on them, and stay that way until you open them again.
 * **☀️ Day and night map**: a light map for reading in the sun and a dark one for the evening. *Motion* switches the moving wind on and off; the arrows and numbers stay.
 * **📡 Works with a weak signal**: the forecast for what you looked at last (your places, the route, that part of the map) is kept on the device. If a download fails, the app says so and keeps showing the saved one. It never invents data.
 
@@ -33,7 +35,7 @@ The map is the whole screen. The wind is drawn on top of it wherever you take th
 
 The forecast is downloaded as points on a fixed lattice over the whole globe, 0.125° apart (about 11 to 14 km), and the wind anywhere is blended from the four points around it. Only what the app is showing is asked for: the four points around the place in the readout, the points along the route, those around the saved places in view, and those across the map. Zoomed out, the map takes a coarser lattice (0.25°, 0.5° and so on up to 4°) instead of more points, while the readout, the place labels and the route always read from the finest one. The map does not zoom out further than a country-sized view, because the wind between points even further apart would not mean much.
 
-Open-Meteo is free for non-commercial use, without an API key, up to 600 calls a minute, 5,000 an hour and 10,000 a day per address, and **every forecast point counts as one call**. The app keeps well inside that: points are reused for an hour, a view is only asked for once the map has stopped moving, and it never asks for more than 400 points a minute or 3,600 an hour. Opening the app takes about 80 calls; a session of looking around, a few hundred.
+Open-Meteo is free for non-commercial use, without an API key, up to 600 calls a minute, 5,000 an hour and 10,000 a day per address, and **every forecast point counts as one call**. The app keeps well inside that: points are reused for an hour and by every zoom level they belong to, a view is only asked for once the map has stopped moving, and it never asks for more than 400 points a minute or 3,600 an hour (counted across restarts). If the service still says its allowance ran out, the app waits as long as it is told to. Opening the app takes about 80 calls; a session of looking around, a few hundred.
 
 ### How the code is organised
 
@@ -112,6 +114,12 @@ Then build and run from Android Studio.
 4. **Pick a time**: drag the bar at the bottom. *Back to now* returns to the current hour. Times are local to the place; when that is not your own time zone, the offset is shown next to them.
 5. **Load a route**: open **Routes** and open your own `.gpx` file, or choose one of the routes around Lisbon. You can also drop a file on the map.
 6. **Ride it**: move along the profile to see head, tail and crosswind at each kilometre. Set your average speed to match your ride.
+
+### Reading the wind along a route
+
+The strip and the percentages split the route by what you feel along the road: **tailwind** (blue) and **headwind** (red) count from 5 km/h along your direction of travel; everything below that, crosswind included, is **across or light** (grey). The same colours are on the route on the map.
+
+Under the elevation profile, the band shows that head or tail component kilometre by kilometre: red above the line is wind against you, blue below it is wind behind you, and the height is its strength. The full height stands for 15 km/h, or for the strongest value on the route when that is more, so on a calm day the band stays thin. There is no grey in it: the grey stretches of the strip are where the band stays within 5 km/h of the line.
 
 ### Adding your own bundled route
 
