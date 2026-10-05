@@ -15,7 +15,7 @@ The map is the whole screen. The wind is drawn on top of it wherever you take th
 * **🕒 Time bar**: 48 hours of forecast for the place you are looking at, in the local time of that place. Drag it or press play. The map follows without reloading.
 * **📊 Route analysis**: open your own GPX file from anywhere, or one of the bundled routes around Lisbon. The route is coloured by what the wind does to you: blue pushes, red slows, grey barely matters. Each point is checked at the time you would get there, for the riding speed you choose. Ferry crossings and other gaps in a recording are not counted as ridden.
 * **🚴 Ride it**: move along the elevation profile, or press *Ride it*, and the rider on the map shows your heading and where the wind hits you.
-* **↕️ More map when you want it**: the time bar and the route details each fold down to one line with the small arrow on them, and stay that way until you open them again.
+* **↕️ More map when you want it**: the wind readout, the time bar and the route details each fold away with the small arrow on them, and stay that way until you open them again. Folded, the readout is one line (speed, direction, gusts) and the route keeps its wind as a low red and blue band that you can still drag along.
 * **☀️ Day and night map**: a light map for reading in the sun and a dark one for the evening. *Motion* switches the moving wind on and off; the arrows and numbers stay.
 * **📡 Works with a weak signal**: the forecast for what you looked at last (your places, the route, that part of the map) is kept on the device. If a download fails, the app says so and keeps showing the saved one. It never invents data.
 
@@ -93,6 +93,7 @@ On Windows you can also double-click `start-app.bat`.
 | `npm test` | Unit tests for the wind, the forecast download and the route maths |
 | `npm run lint` | ESLint |
 | `npm run android:sync` | Builds and copies the web app into the Android project |
+| `npm run android:icons` | Makes the Android start-up screens and the icons for old launchers from the SVGs in `assets/` |
 | `npm run routes:slim` | Strips timestamps and extra points from the GPX files in `public/routes` |
 
 ### Android
@@ -113,6 +114,8 @@ cd android
 
 The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`: copy it to the phone and open it there to install it.
 
+The app icon is the W of Wind drawn as a route in the app's three wind colours. It lives in four places that are changed together: `public/favicon.svg` for the browser, `assets/icon-only.svg` and `assets/splash.svg` (with its copy `splash-dark.svg`) for `npm run android:icons`, and the two vector layers of the Android icon in `android/app/src/main/res/drawable/ic_launcher_*.xml`, which are edited by hand so the icon stays sharp at any size.
+
 ---
 
 ## 🧭 How to use
@@ -126,9 +129,11 @@ The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`: copy 
 
 ### Reading the wind along a route
 
-The strip and the percentages split the route by what you feel along the road: **tailwind** (blue) and **headwind** (red) count from 5 km/h along your direction of travel; everything below that, crosswind included, is **across or light** (grey). The same colours are on the route on the map.
+The coloured bar and the percentages split the route by what you feel along the road: **tailwind** (blue) and **headwind** (red) count from 5 km/h along your direction of travel; everything below that, crosswind included, is **across or light** (grey). The same colours are on the route on the map.
 
-Under the elevation profile, the band shows that head or tail component kilometre by kilometre: red above the line is wind against you, blue below it is wind behind you, and the height is its strength. A thin line marks the highest red point and another the lowest blue one, each with its value: "headwind up to 12 km/h" over the upper line, "tailwind up to 8 km/h" under the lower one. Red and blue are drawn to one scale, so twice the height is twice the wind; the full height of the band stands for 15 km/h, or for the strongest value on the route rounded up to the next 5 when that is more, so on a calm day the band stays thin. There is no grey in it: the grey stretches of the strip are where the band stays within 5 km/h of the line.
+Under the elevation profile, the band shows that head or tail component kilometre by kilometre: red above the line is wind against you, blue below it is wind behind you, and the height is its strength. A thin line marks the highest red point and another the lowest blue one, each with its value: "headwind up to 12 km/h" over the upper line, "tailwind up to 8 km/h" under the lower one. Red and blue are drawn to one scale, so twice the height is twice the wind; the full height of the band stands for 15 km/h, or for the strongest value on the route rounded up to the next 5 when that is more, so on a calm day the band stays thin. There is no grey in it: the grey stretches of the bar are where the band stays within 5 km/h of the line.
+
+With the route details folded away, the band is shown on its own, with the strongest headwind and tailwind beside it.
 
 ### Adding your own bundled route
 

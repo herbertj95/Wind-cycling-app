@@ -95,13 +95,13 @@ function initialFocus(places) {
   return { type: 'place', id: places[0]?.id };
 }
 
-// which panels of the dock were left folded away, to give the map more room
+// which panels were left folded away, to give the map more room
 function initialFolded() {
   try {
     const saved = JSON.parse(localStorage.getItem(FOLDED_KEY));
-    return { time: saved?.time === true, route: saved?.route === true };
+    return { time: saved?.time === true, route: saved?.route === true, readout: saved?.readout === true };
   } catch {
-    return { time: false, route: false };
+    return { time: false, route: false, readout: false };
   }
 }
 
@@ -138,7 +138,7 @@ export default function App() {
   const [menu, setMenu] = useState(null);
   const [routeError, setRouteError] = useState(null);
   const [notice, setNotice] = useState(null);
-  // the time bar and the route details can each be folded down to one line
+  // the readout, the time bar and the route details can each be folded down to one line
   const [folded, setFolded] = useState(initialFolded);
 
   // what the map shows once it has come to rest: { bounds, center, zoom }
@@ -191,7 +191,7 @@ export default function App() {
   const focusPlace = useMemo(() => {
     if (focus.type === 'rider' && riderPoint) {
       const km = riderPoint.distance.toFixed(1);
-      return { lat: riderPoint.lat, lng: riderPoint.lng, title: `${route.name}, km ${km}`, place: `km ${km}` };
+      return { lat: riderPoint.lat, lng: riderPoint.lng, title: `${route.name}, km ${km}`, shortTitle: `km ${km}`, place: `km ${km}` };
     }
     if (focus.type === 'pin') {
       const coordinates = `${focus.lat.toFixed(3)}, ${focus.lng.toFixed(3)}`;
@@ -778,6 +778,7 @@ export default function App() {
       <WindReadout
         ref={readoutRef}
         title={focusPlace ? focusPlace.title : 'Wind'}
+        shortTitle={focusPlace?.shortTitle}
         when={focusPlace ? whenLabel : null}
         reading={reading}
         rider={onRoute && routeHasWind ? riderInfo : null}
@@ -791,6 +792,8 @@ export default function App() {
         onSave={saveFocus}
         onRemove={removeFocus}
         onRetry={store.retry}
+        collapsed={folded.readout}
+        onToggleCollapsed={() => setFolded((prev) => ({ ...prev, readout: !prev.readout }))}
       />
 
       <div className="toolbar" ref={toolbarRef}>

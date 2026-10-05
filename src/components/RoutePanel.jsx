@@ -1,6 +1,6 @@
 import { CaretDown, CaretUp, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
 import RouteChart from './RouteChart';
-import { RIDE_SPEEDS } from '../utils/routeAnalysis';
+import { RIDE_SPEEDS, windPeaks } from '../utils/routeAnalysis';
 import { formatDuration } from '../utils/time';
 
 const PLAYBACK_RATES = [1, 2.5, 5];
@@ -27,7 +27,8 @@ const NO_WIND_TEXT = {
  * a plain-language verdict, and the profile you can ride along.
  * - analysis: from analyseRoute
  * - windState: how far the forecast along the route is, 'ready' | 'loading' | 'failed'
- * - collapsed: only the name, the buttons and the coloured split are shown, to leave the map free
+ * - collapsed: only the name, the buttons and the wind along the route as a low strip are shown, to
+ *   leave the map free
  * - colors: { tail, neutral, head } for the current theme
  */
 export default function RoutePanel({
@@ -113,8 +114,23 @@ export default function RoutePanel({
         </div>
       </div>
 
-      {/* folded away, the split of the route by wind stays as a strip under the name */}
-      {collapsed ? wind && shareBar : (
+      {/* folded away, the wind along the route stays as a low strip under the name, with the strongest
+          wind each way beside it; the strip can still be dragged along */}
+      {collapsed ? (
+        <div className="route-brief">
+          <RouteChart
+            compact
+            route={route}
+            wind={wind}
+            riderIdx={index}
+            onScrub={onScrub}
+            headColor={colors.head}
+            tailColor={colors.tail}
+            valueText={pointText}
+          />
+          {wind && <Peaks wind={wind} colors={colors} />}
+        </div>
+      ) : (
         <div className="route-body" id={DETAILS_ID}>
           <div className="route-summary">
             {!wind && <p className="route-plan">{NO_WIND_TEXT[windState]}</p>}
@@ -154,6 +170,26 @@ export default function RoutePanel({
         </div>
       )}
     </section>
+  );
+}
+
+/** The strongest headwind and tailwind of the route, as the key of the folded strip. */
+function Peaks({ wind, colors }) {
+  const peaks = windPeaks(wind);
+  const rows = [
+    ['Headwind', peaks.head, colors.head],
+    ['Tailwind', peaks.tail, colors.tail],
+  ];
+  return (
+    <div className="route-peaks">
+      {rows.map(([name, kmh, color]) => (
+        <span key={name}>
+          <i className="swatch" style={{ background: color }} />
+          <span className="visually-hidden">{name} </span>
+          {Math.round(kmh) > 0 ? `up to ${Math.round(kmh)} km/h` : 'none'}
+        </span>
+      ))}
+    </div>
   );
 }
 

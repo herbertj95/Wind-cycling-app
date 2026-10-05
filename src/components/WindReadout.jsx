@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookmarkSimple, WifiSlash } from '@phosphor-icons/react';
+import { BookmarkSimple, CaretDown, CaretUp, WifiSlash } from '@phosphor-icons/react';
 import WindDial from './WindDial';
 import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees } from '../utils/wind';
 
@@ -19,6 +19,7 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
 
 /**
  * The reading for the place in focus: how strong, from where, and the gusts.
+ * - shortTitle: what to call the place where there is little room (the kilometre, on a route); the title otherwise
  * - status: 'ready' (there is a reading), 'loading', 'error', 'none' (no forecast for this point or moment)
  *   or 'empty' (no place is in focus)
  * - reading: { speed, from, gust, temp, feels } when status is 'ready'
@@ -29,8 +30,10 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
  * - place: what can be done with the place in focus, or null when it cannot be saved (the rider on a route):
  *   { key, saved, name }. `name` is the name it would be saved under when it already has one.
  * - quiet: the numbers are changing continuously (playback), so screen readers are not told each step
+ * - collapsed: the reading is shown on one line, to leave the map free. It only folds while there is a
+ *   reading: a message about a missing forecast is always shown whole.
  */
-export default function WindReadout({ ref, title, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, onSave, onRemove, onRetry }) {
+export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
   // the key of the place whose name is being typed; a different place in focus closes the form by itself
   const [namingKey, setNamingKey] = useState(null);
   const [name, setName] = useState('');
@@ -40,6 +43,53 @@ export default function WindReadout({ ref, title, when, reading, rider, note, st
   const speed = hasReading ? Math.round(reading.speed) : null;
   const spoken = hasReading && !isCalm ? `from the ${compassPoint(reading.from)}` : 'calm';
   const naming = place !== null && !place.saved && namingKey === place.key;
+  const folded = collapsed && hasReading;
+
+  // the panel hangs from the top of the screen: it folds upwards and opens downwards
+  const foldButton = hasReading && (
+    <button
+      type="button"
+      className="icon-button readout-fold"
+      onClick={onToggleCollapsed}
+      aria-expanded={!folded}
+      aria-label={folded ? 'Show the wind details' : 'Hide the wind details'}
+      title={folded ? 'Show the wind details' : 'Hide the wind details'}
+    >
+      {folded ? <CaretDown size={16} aria-hidden="true" /> : <CaretUp size={16} aria-hidden="true" />}
+    </button>
+  );
+
+  // one whole sentence for screen readers, instead of every changing fragment of the panel
+  const spokenReading = (
+    <p className="visually-hidden" aria-live="polite" aria-atomic="true">
+      {hasReading && !quiet
+        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}`
+        : ''}
+    </p>
+  );
+
+  if (folded) {
+    return (
+      <section ref={ref} className="readout panel folded">
+        <div className="readout-brief">
+          <WindDial from={isCalm ? undefined : reading.from} bearing={rider?.bearing} />
+          <div className="readout-speed">
+            {speed}
+            <small>km/h</small>
+          </div>
+          <span className="readout-gist">
+            {isCalm ? 'calm' : compassPoint(reading.from)}, gusts {Math.round(reading.gust)}
+          </span>
+          {stale && <WifiSlash size={14} aria-label="This forecast could not be renewed" />}
+          {/* on a route, the colour of what the wind does to the rider right there */}
+          {rider && <i className="swatch" style={{ background: rider.color }} title={describeRiderWind(rider.head, rider.cross)} />}
+          <h1 title={title}>{shortTitle ?? title}</h1>
+          {foldButton}
+        </div>
+        {spokenReading}
+      </section>
+    );
+  }
 
   const toggleSaved = () => {
     if (place.saved) onRemove();
@@ -59,9 +109,10 @@ export default function WindReadout({ ref, title, when, reading, rider, note, st
 
   return (
     <section ref={ref} className="readout panel">
-      <div className={place ? 'readout-top can-save' : 'readout-top'}>
+      <div className={`readout-top${place ? ' can-save' : ''}${hasReading ? ' can-fold' : ''}`}>
         <h1>{title}</h1>
         {when && <span>{when}</span>}
+        {foldButton}
         {place && (
           <button
             type="button"
@@ -110,7 +161,7 @@ export default function WindReadout({ ref, title, when, reading, rider, note, st
         <>
           <div className="readout-main">
             <WindDial from={isCalm ? undefined : reading.from} bearing={rider?.bearing} />
-            <div>
+            <div className="readout-wind">
               <div className="readout-speed">
                 {speed}
                 <small>km/h</small>
@@ -167,12 +218,7 @@ export default function WindReadout({ ref, title, when, reading, rider, note, st
         </p>
       )}
 
-      {/* one whole sentence for screen readers, instead of every changing fragment above */}
-      <p className="visually-hidden" aria-live="polite" aria-atomic="true">
-        {hasReading && !quiet
-          ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}`
-          : ''}
-      </p>
+      {spokenReading}
     </section>
   );
 }
