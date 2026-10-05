@@ -1,6 +1,7 @@
-import { CaretDown, CaretUp, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
+import { CaretDown, CaretUp, Drop, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
 import RouteChart from './RouteChart';
 import { RIDE_SPEEDS, windPeaks } from '../utils/routeAnalysis';
+import { formatRain, isWet } from '../utils/rain';
 import { formatDuration } from '../utils/time';
 
 const PLAYBACK_RATES = [1, 2.5, 5];
@@ -13,7 +14,8 @@ function describePoint(point, wind) {
   const across = Math.round(Math.abs(wind.cross));
   const alongText = along === 0 ? 'no head or tailwind' : `${along} km/h ${wind.head > 0 ? 'headwind' : 'tailwind'}`;
   const acrossText = across === 0 ? 'nothing across' : `${across} km/h across from the ${wind.cross > 0 ? 'right' : 'left'}`;
-  return `${place}: ${alongText}, ${acrossText}`;
+  const rainText = isWet(wind.rain) ? `, rain ${formatRain(wind.rain)} mm/h` : '';
+  return `${place}: ${alongText}, ${acrossText}${rainText}`;
 }
 
 const NO_WIND_TEXT = {
@@ -128,7 +130,7 @@ export default function RoutePanel({
             tailColor={colors.tail}
             valueText={pointText}
           />
-          {wind && <Peaks wind={wind} colors={colors} />}
+          {wind && <Peaks wind={wind} colors={colors} rain={analysis.rain} />}
         </div>
       ) : (
         <div className="route-body" id={DETAILS_ID}>
@@ -173,8 +175,11 @@ export default function RoutePanel({
   );
 }
 
-/** The strongest headwind and tailwind of the route, as the key of the folded strip. */
-function Peaks({ wind, colors }) {
+/**
+ * The strongest headwind and tailwind of the route, as the key of the folded strip; and the heaviest
+ * rain, on a ride that meets any (the line along the top of the strip says where).
+ */
+function Peaks({ wind, colors, rain }) {
   const peaks = windPeaks(wind);
   const rows = [
     ['Headwind', peaks.head, colors.head],
@@ -189,6 +194,13 @@ function Peaks({ wind, colors }) {
           {Math.round(kmh) > 0 ? `up to ${Math.round(kmh)} km/h` : 'none'}
         </span>
       ))}
+      {isWet(rain.max) && (
+        <span className="route-peaks-rain">
+          <Drop size={10} weight="fill" aria-hidden="true" />
+          <span className="visually-hidden">Rain </span>
+          up to {formatRain(rain.max)} mm/h
+        </span>
+      )}
     </div>
   );
 }
@@ -221,6 +233,14 @@ function Shares({ analysis, parts, total }) {
         <AdviceIcon size={16} aria-hidden="true" />
         <span><b>{advisory.title}.</b> <span className="advice-text">{advisory.text}</span></span>
       </p>
+
+      {/* only on a ride with rain, or a real chance of it */}
+      {analysis.rainNote && (
+        <p className="route-advice route-rain">
+          <Drop size={16} weight="fill" aria-hidden="true" />
+          <span>{analysis.rainNote}</span>
+        </p>
+      )}
     </>
   );
 }

@@ -11,7 +11,8 @@ const KATHMANDU = { lat: 27.75, lng: 85.375 };
 
 /**
  * One location of an Open-Meteo answer with \`hours\` hourly values: at hour h the wind is
- * 12 + 2h km/h from 70 + 90h degrees, gusting 4.5 km/h more, at 16.75 - h degrees feeling 1.5 colder.
+ * 12 + 2h km/h from 70 + 90h degrees, gusting 4.5 km/h more, at 16.75 - h degrees feeling 1.5 colder,
+ * with 0.25h mm of rain at a chance of 10h percent.
  */
 function location(hours, extra = {}) {
   const series = (at) => Array.from({ length: hours }, (_, h) => at(h));
@@ -29,6 +30,8 @@ function location(hours, extra = {}) {
       wind_speed_10m: series((h) => 12 + 2 * h),
       wind_direction_10m: series((h) => (70 + 90 * h) % 360),
       wind_gusts_10m: series((h) => 16.5 + 2 * h),
+      precipitation: series((h) => 0.25 * h),
+      precipitation_probability: series((h) => 10 * h),
     },
     ...extra,
   };
@@ -60,7 +63,7 @@ describe('fetchPoints', () => {
     expect(url.searchParams.get('longitude')).toBe('-9.125,2.875,85.375');
   });
 
-  it('asks for the five hourly series, as unix times, from three hours back to two days ahead', async () => {
+  it('asks for the wind, the temperature and the rain by the hour, as unix times, from three hours back to two days ahead', async () => {
     const fetchMock = answering(location(4));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -68,10 +71,11 @@ describe('fetchPoints', () => {
 
     const url = requestedUrl(fetchMock);
     const hourly = url.searchParams.get('hourly').split(',');
-    for (const name of ['temperature_2m', 'apparent_temperature', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m']) {
+    for (const name of ['temperature_2m', 'apparent_temperature', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'precipitation', 'precipitation_probability']) {
       expect(hourly).toContain(name);
     }
-    expect(hourly).toHaveLength(5);
+    // more than ten fields would count as more than one call for every position
+    expect(hourly).toHaveLength(7);
     expect(url.searchParams.get('timeformat')).toBe('unixtime');
     expect(url.searchParams.get('past_hours')).toBe('3');
     // 48 hours ahead plus the hour in progress
@@ -123,6 +127,8 @@ describe('fetchPoints', () => {
       gust: [16.5, 18.5, 20.5, 22.5],
       temp: [16.75, 15.75, 14.75, 13.75],
       feels: [15.25, 14.25, 13.25, 12.25],
+      rain: [0, 0.25, 0.5, 0.75],
+      rainChance: [0, 10, 20, 30],
       zone: 'Europe/Lisbon',
       fetchedAt: 1234567890123,
     });
@@ -190,6 +196,45 @@ describe('fetchPoints', () => {
 
     expect(point.n).toBe(3);
     expect(point.temp).toEqual([16.75, null, 14.75]);
+  });
+
+  it('reads the rain and its chance hour by hour, cut where the wind is cut', async () => {
+    const holed = location(4);
+    holed.hourly.wind_speed_10m[3] = null;
+    vi.stubGlobal('fetch', answering(holed));
+
+    const [point] = await fetchPoints([LISBON]);
+
+    expect(point.n).toBe(3);
+    expect(point.rain).toEqual([0, 0.25, 0.5]);
+    expect(point.rainChance).toEqual([0, 10, 20]);
+  });
+
+  it('keeps an hour whose rain the model does not give, as unknown', async () => {
+    const patchy = location(3);
+    patchy.hourly.precipitation[1] = null;
+    patchy.hourly.precipitation_probability[2] = null;
+    vi.stubGlobal('fetch', answering(patchy));
+
+    const [point] = await fetchPoints([LISBON]);
+
+    expect(point.n).toBe(3);
+    expect(point.rain).toEqual([0, null, 0.5]);
+    expect(point.rainChance).toEqual([0, 10, null]);
+  });
+
+  it('still gives the wind when the answer comes without the rain', async () => {
+    const dryAnswer = location(3);
+    delete dryAnswer.hourly.precipitation;
+    dryAnswer.hourly.precipitation_probability = [5];
+    vi.stubGlobal('fetch', answering(dryAnswer));
+
+    const [point] = await fetchPoints([LISBON]);
+
+    expect(point.n).toBe(3);
+    expect(point.speed).toEqual([12, 14, 16]);
+    expect(point.rain).toEqual([null, null, null]);
+    expect(point.rainChance).toEqual([null, null, null]);
   });
 
   it('has no zone for a location that comes without one', async () => {

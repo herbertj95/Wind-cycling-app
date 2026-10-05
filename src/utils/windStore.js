@@ -47,7 +47,7 @@ function retryDelay(problem, failures) {
 }
 
 // a point that came with no hours of wind: it is there, with nothing to read
-const emptied = (point) => ({ ...point, n: 0, speed: [], dir: [], gust: [], temp: [], feels: [] });
+const emptied = (point) => ({ ...point, n: 0, speed: [], dir: [], gust: [], temp: [], feels: [], rain: [], rainChance: [] });
 
 /**
  * - fetchPoints(positions): downloads forecast points (see weatherApi)
@@ -167,11 +167,13 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
       if (saved?.v !== 1 || !Array.isArray(saved.points)) return;
       for (const entry of saved.points) {
         if (!Array.isArray(entry)) continue;
-        const [level, row, col, t0, zone, fetchedAt, speed, dir, gust, temp, feels] = entry;
+        const [level, row, col, t0, zone, fetchedAt, speed, dir, gust, temp, feels, rain, rainChance] = entry;
         const series = [speed, dir, gust, temp, feels];
         if (!Number.isInteger(level) || level < 0 || level > MAX_LEVEL || !Number.isInteger(row) || !Number.isInteger(col)) continue;
         if (!Number.isFinite(t0) || !Number.isFinite(fetchedAt) || !series.every((s) => Array.isArray(s) && s.length === series[0].length)) continue;
         const point = { t0, n: speed.length, speed, dir, gust, temp, feels, zone: typeof zone === 'string' ? zone : null, fetchedAt };
+        // points saved before the app read the rain come without it: their wind is still good
+        if ([rain, rainChance].every((s) => Array.isArray(s) && s.length === speed.length)) Object.assign(point, { rain, rainChance });
         if (point.n === 0 || expired(point, t)) continue;
         put(nodeKey(level, row, col), { level, row, col }, point);
       }
@@ -194,7 +196,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     const rows = keys.slice(0, MAX_SAVED).map((key) => {
       const p = points.get(key);
       // the 0 is the lattice level the row and the column are counted on
-      return [0, p.row, p.col, p.t0, p.zone, p.fetchedAt, p.speed, p.dir, p.gust, p.temp, p.feels];
+      return [0, p.row, p.col, p.t0, p.zone, p.fetchedAt, p.speed, p.dir, p.gust, p.temp, p.feels, p.rain ?? null, p.rainChance ?? null];
     });
     for (const count of [rows.length, Math.min(rows.length, 60)]) {
       try {

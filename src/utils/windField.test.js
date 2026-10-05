@@ -9,7 +9,7 @@ import { angleDiff } from './wind';
 const T0 = 1790985600; // 2026-10-03 00:00 UTC, in unix seconds like Open-Meteo sends with timeformat=unixtime
 const HOUR = 3600;
 
-/** A forecast point as fetchPoints returns it, from one { speed, dir, gust?, temp?, feels? } per hour. */
+/** A forecast point as fetchPoints returns it, from one { speed, dir, gust?, temp?, feels?, rain?, rainChance? } per hour. */
 function makePoint(hourly, extra = {}) {
   return {
     t0: T0,
@@ -19,6 +19,8 @@ function makePoint(hourly, extra = {}) {
     gust: hourly.map((w) => ('gust' in w ? w.gust : w.speed)),
     temp: hourly.map((w) => ('temp' in w ? w.temp : 18)),
     feels: hourly.map((w) => ('feels' in w ? w.feels : 17)),
+    rain: hourly.map((w) => ('rain' in w ? w.rain : 0)),
+    rainChance: hourly.map((w) => ('rainChance' in w ? w.rainChance : 0)),
     zone: 'Europe/Lisbon',
     fetchedAt: T0 * 1000,
     ...extra,
@@ -77,6 +79,39 @@ describe('pointAt', () => {
     expect(pointAt(point, T0 + 1.9 * HOUR).gust).toBe(44);
     // the last hour has no next value: it keeps its own
     expect(pointAt(point, T0 + 2 * HOUR).gust).toBe(44);
+  });
+
+  it('reports the rain of the hour in progress and its chance, filed like the gusts under the hour that ends it', () => {
+    const showers = makePoint([
+      { speed: 10, dir: 0, rain: 9, rainChance: 99 },
+      { speed: 10, dir: 0, rain: 0.4, rainChance: 60 },
+      { speed: 10, dir: 0, rain: 2.5, rainChance: 85 },
+    ]);
+    // what falls from 00:00 to 01:00 is the 01:00 value: the 00:00 value belongs to the hour before
+    expect(pointAt(showers, T0).rain).toBe(0.4);
+    expect(pointAt(showers, T0).rainChance).toBe(60);
+    // it is an amount for the whole hour, not a value to blend towards the next one
+    expect(pointAt(showers, T0 + 0.5 * HOUR).rain).toBe(0.4);
+    expect(pointAt(showers, T0 + HOUR).rain).toBe(2.5);
+    expect(pointAt(showers, T0 + HOUR).rainChance).toBe(85);
+    // the last hour has no next value: it keeps its own
+    expect(pointAt(showers, T0 + 2 * HOUR).rain).toBe(2.5);
+  });
+
+  it('has nothing to say about the rain where the forecast does not give it', () => {
+    const patchy = makePoint([
+      { speed: 10, dir: 0 },
+      { speed: 10, dir: 0, rain: null, rainChance: null },
+    ]);
+    expect(Number.isNaN(pointAt(patchy, T0).rain)).toBe(true);
+    expect(Number.isNaN(pointAt(patchy, T0).rainChance)).toBe(true);
+    // a point kept from before the app read the rain has no such series at all: its wind is still read
+    const old = makePoint([{ speed: 12, dir: 0 }, { speed: 14, dir: 0 }]);
+    delete old.rain;
+    delete old.rainChance;
+    expect(pointAt(old, T0).speed).toBe(12);
+    expect(Number.isNaN(pointAt(old, T0).rain)).toBe(true);
+    expect(Number.isNaN(pointAt(old, T0).rainChance)).toBe(true);
   });
 
   it('blends speed and temperature between two hours', () => {
@@ -155,7 +190,7 @@ describe('blendAt', () => {
 
   const value = (speed, dir, extra = {}) => {
     const rad = (dir * Math.PI) / 180;
-    return { u: -speed * Math.sin(rad), v: -speed * Math.cos(rad), speed, gust: speed + 5, temp: 18, feels: 17, late: false, fetchedAt: 1000, ...extra };
+    return { u: -speed * Math.sin(rad), v: -speed * Math.cos(rad), speed, gust: speed + 5, rain: 0, rainChance: 0, temp: 18, feels: 17, late: false, fetchedAt: 1000, ...extra };
   };
   const reader = (values) => (key) => values.get(key) ?? null;
   const corners = (sw, se, nw, ne) => new Map([[SW, sw], [SE, se], [NW, nw], [NE, ne]]);
@@ -241,6 +276,24 @@ describe('blendAt', () => {
     expect(at.fetchedAt).toBe(3000);
     values.set(NE, value(10, 0));
     expect(blendAt(38.7, -9.2, [0], reader(values)).late).toBe(false);
+  });
+
+  it('blends the rain and its chance like the speed', () => {
+    const values = corners(value(10, 0, { rain: 2, rainChance: 80 }), value(10, 0), value(10, 0), value(10, 0));
+    // on the wet point, halfway to a dry one, and in the middle of the four
+    expect(blendAt(38.625, -9.25, [0], reader(values)).rain).toBeCloseTo(2, 9);
+    expect(blendAt(38.625, -9.1875, [0], reader(values)).rain).toBeCloseTo(1, 9);
+    const middle = blendAt(38.6875, -9.1875, [0], reader(values));
+    expect(middle.rain).toBeCloseTo(0.5, 9);
+    expect(middle.rainChance).toBeCloseTo(20, 9);
+  });
+
+  it('does not make up the rain when one of the four points does not have it', () => {
+    const values = corners(value(10, 0, { rain: 2, rainChance: 80 }), value(10, 0, { rain: NaN, rainChance: NaN }), value(10, 0), value(10, 0));
+    const at = blendAt(38.7, -9.2, [0], reader(values));
+    expect(Number.isNaN(at.rain)).toBe(true);
+    expect(Number.isNaN(at.rainChance)).toBe(true);
+    expect(at.speed).toBeCloseTo(10, 9);
   });
 
   it('carries a missing temperature through as missing', () => {

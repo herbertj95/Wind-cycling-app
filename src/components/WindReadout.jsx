@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { BookmarkSimple, CaretDown, CaretUp, WifiSlash } from '@phosphor-icons/react';
+import { BookmarkSimple, CaretDown, CaretUp, Drop, WifiSlash } from '@phosphor-icons/react';
 import WindDial from './WindDial';
 import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees } from '../utils/wind';
+import { describeRain, formatRain, isWet } from '../utils/rain';
 
 const PROBLEM_TEXT = {
   offline: 'The wind forecast could not be loaded. Check your connection.',
@@ -18,11 +19,12 @@ const STALE_TEXT = {
 const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(value)}°${unit}` : '–');
 
 /**
- * The reading for the place in focus: how strong, from where, and the gusts.
+ * The reading for the place in focus: how strong, from where, and the gusts; and the rain, when there is
+ * any to speak of.
  * - shortTitle: what to call the place where there is little room (the kilometre, on a route); the title otherwise
  * - status: 'ready' (there is a reading), 'loading', 'error', 'none' (no forecast for this point or moment)
  *   or 'empty' (no place is in focus)
- * - reading: { speed, from, gust, temp, feels } when status is 'ready'
+ * - reading: { speed, from, gust, temp, feels, rain, rainChance } when status is 'ready'
  * - rider: { bearing, head, cross, color } when the focus is a point on the route
  * - problem: why the last download failed, 'offline' | 'service' | 'limit', or null
  * - updatedAt: when the forecast being shown was downloaded, e.g. "Sat 3, 18:42"
@@ -44,6 +46,8 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
   const spoken = hasReading && !isCalm ? `from the ${compassPoint(reading.from)}` : 'calm';
   const naming = place !== null && !place.saved && namingKey === place.key;
   const folded = collapsed && hasReading;
+  // null on a dry hour: the panel only grows a line when rain is on the way
+  const rain = hasReading ? describeRain(reading.rain, reading.rainChance) : null;
 
   // the panel hangs from the top of the screen: it folds upwards and opens downwards
   const foldButton = hasReading && (
@@ -63,7 +67,7 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
   const spokenReading = (
     <p className="visually-hidden" aria-live="polite" aria-atomic="true">
       {hasReading && !quiet
-        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}`
+        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}${rain ? ` ${rain}.` : ''}`
         : ''}
     </p>
   );
@@ -80,6 +84,12 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
           <span className="readout-gist">
             {isCalm ? 'calm' : compassPoint(reading.from)}, gusts {Math.round(reading.gust)}
           </span>
+          {isWet(reading.rain) && (
+            <span className="readout-wet" title={rain}>
+              <Drop size={12} weight="fill" aria-hidden="true" />
+              {formatRain(reading.rain)} mm
+            </span>
+          )}
           {stale && <WifiSlash size={14} aria-label="This forecast could not be renewed" />}
           {/* on a route, the colour of what the wind does to the rider right there */}
           {rider && <i className="swatch" style={{ background: rider.color }} title={describeRiderWind(rider.head, rider.cross)} />}
@@ -178,6 +188,13 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
               <b>{degrees(reading.temp)}</b>, feels <b>{degrees(reading.feels)}</b>
             </div>
           </div>
+
+          {rain && (
+            <p className="readout-rain">
+              <Drop size={15} weight="fill" aria-hidden="true" />
+              {rain}
+            </p>
+          )}
 
           <dl className="readout-stats">
             <div>

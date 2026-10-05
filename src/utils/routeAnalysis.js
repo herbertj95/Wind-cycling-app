@@ -1,5 +1,7 @@
 // What the wind does along a route: head/tail/cross at every point, the totals and a plain-language advisory.
+// And what the rain does: where on the route the rider gets wet.
 import { windComponents, classifyWindEffect, CALM_KMH } from './wind';
+import { LIKELY_PERCENT, formatRain, isWet } from './rain';
 
 // Average riding speeds offered when planning, in km/h
 export const RIDE_SPEEDS = [20, 25, 30];
@@ -98,6 +100,20 @@ function buildAdvisory(a, totalKm) {
   };
 }
 
+// The rain along the route in one sentence, or null when there is nothing worth saying about it.
+function buildRainNote(rain, coveredKm) {
+  if (!rain.known) return null;
+  // a single wet reading is not a wet ride: it has to last for a real stretch of road
+  if (rain.wetKm >= Math.max(0.5, coveredKm * 0.01)) {
+    // an amount with little chance behind it is only possible (see describeRain)
+    const rainWord = rain.wetChance > 0 && rain.wetChance < LIKELY_PERCENT ? 'Rain possible' : 'Rain';
+    const where = rain.wetKm >= coveredKm * 0.95 ? `${rainWord} all the way` : `${rainWord} on ${Math.max(1, round(rain.wetKm))} km of the ride`;
+    const chance = rain.wetChance > 0 ? ` (${round(rain.wetChance)}% chance)` : '';
+    return `${where}, up to ${formatRain(rain.max)} mm/h${chance}.`;
+  }
+  return rain.chance >= LIKELY_PERCENT ? `Up to a ${round(rain.chance)}% chance of rain on the way.` : null;
+}
+
 /**
  * Analyses a route for a ride that starts at `startHour` and averages `rideKmh`.
  * - forecast.sample(lat, lng, hour): the wind at a position and a moment, in hours on the same clock as
@@ -107,6 +123,10 @@ function buildAdvisory(a, totalKm) {
  * `share` splits the distance by what the rider feels along the road (see classifyWindEffect):
  * `cross` holds everything that is neither a noticeable head nor tailwind.
  * Stretches without a forecast are counted in `outsideKm` and in nothing else.
+ * `rain` is what the forecast says about getting wet: the km ridden in rain (`wetKm`), the heaviest
+ * rain met (`max`, mm an hour) with its chance (`wetChance`), and the highest chance of rain anywhere
+ * on the way (`chance`). `known` is false when the forecast along the route says nothing about rain.
+ * `rainNote` puts that in a sentence, or is null on a dry ride.
  */
 export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
   const pts = route.points;
@@ -121,6 +141,7 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
   let gustyKm = 0;
   let outsideKm = 0;
   let beyondForecast = false;
+  const rain = { wetKm: 0, max: 0, wetChance: 0, chance: 0, known: false };
 
   const wind = pts.map((pt, i) => {
     const segKm = i > 0 ? pt.distance - pts[i - 1].distance : 0;
@@ -128,7 +149,7 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
     if (!w) {
       // without a forecast there is no wind to report: the stretch is left out of every total
       outsideKm += segKm;
-      return { speed: 0, gust: 0, from: 0, temp: NaN, feels: NaN, head: 0, cross: 0, effect: 'unknown', outside: true };
+      return { speed: 0, gust: 0, from: 0, temp: NaN, feels: NaN, rain: NaN, rainChance: NaN, head: 0, cross: 0, effect: 'unknown', outside: true };
     }
     if (w.late) beyondForecast = true;
     const { head, cross } = windComponents(pt.bearing, w.from, w.speed);
@@ -147,7 +168,18 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
     maxCrossGust = Math.max(maxCrossGust, crossGust);
     if (w.gust >= STRONG_GUST_KMH || crossGust >= STRONG_CROSS_GUST_KMH) gustyKm += segKm;
 
-    return { speed: w.speed, gust: w.gust, from: w.from, temp: w.temp, feels: w.feels, head, cross, effect, outside: false };
+    // the rain of the hour in which the rider gets to this point
+    const wet = Number.isFinite(w.rain) ? w.rain : NaN;
+    const wetChance = Number.isFinite(w.rainChance) ? w.rainChance : NaN;
+    if (Number.isFinite(wet)) rain.known = true;
+    if (wetChance > rain.chance) rain.chance = wetChance;
+    if (isWet(wet)) {
+      rain.wetKm += segKm;
+      if (wet > rain.max) rain.max = wet;
+      if (wetChance > rain.wetChance) rain.wetChance = wetChance;
+    }
+
+    return { speed: w.speed, gust: w.gust, from: w.from, temp: w.temp, feels: w.feels, rain: wet, rainChance: wetChance, head, cross, effect, outside: false };
   });
 
   const durationHours = totalKm / rideKmh;
@@ -165,6 +197,8 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25) {
     outsideKm,
     durationHours,
     beyondForecast,
+    rain,
+    rainNote: buildRainNote(rain, coveredKm),
   };
   result.advisory = buildAdvisory(result, totalKm);
   return result;

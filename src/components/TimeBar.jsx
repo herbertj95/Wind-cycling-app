@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { CaretDown, CaretUp, Pause, Play } from '@phosphor-icons/react';
 import { formatDay, formatDayClock, zoneLabel } from '../utils/time';
+import { LIKELY_PERCENT, formatRain, isWet, rainLevel } from '../utils/rain';
 
 const HOUR = 3600;
 // Hours moved by PageUp / PageDown
@@ -13,12 +14,15 @@ function relativeLabel(hoursFromNow) {
 }
 
 /**
- * Two days of forecast for one place, one bar per hour: wind speed, with gusts as the paler cap.
+ * Two days of forecast for one place, one bar per hour: wind speed, with gusts as the paler cap. An hour
+ * with rain stands on a teal foot, taller the harder it rains and paler when the rain is only possible.
  * Tap or drag to choose the hour shown on the map.
- * - hours: [{ time, speed, gust }], one per hour; speed and gust are null while that hour is not loaded
+ * - hours: [{ time, speed, gust, rain, rainChance }], one per hour; speed and gust are null while that
+ *   hour is not loaded, and rain (mm in that hour) and its chance (percent) are not numbers where the
+ *   forecast does not give them
  * - selected / nowTime: unix seconds of the chosen bar and of the bar for the hour in progress
  * - shownTime: unix seconds of the moment on the map (the current minute while following the clock)
- * - nowReading: { speed, gust } at that place for the current minute, used while following the clock
+ * - nowReading: { speed, gust, rain, rainChance } at that place for the current minute, used while following the clock
  * - place: where the bars are measured, e.g. "Lisboa"
  * - zone: time zone of that place; times are shown in its local time
  * - rideStart: the chosen hour is when a ride sets off
@@ -71,7 +75,9 @@ export default function TimeBar({
   const hoursFromNow = Math.round((selected - nowTime) / HOUR);
   const when = relativeLabel(hoursFromNow);
   const quoted = isNow && nowReading ? nowReading : current;
-  const wind = quoted.speed === null ? null : `${Math.round(quoted.speed)} km/h, gusts ${Math.round(quoted.gust)}`;
+  const chance = Number.isFinite(quoted.rainChance) ? ` (${Math.round(quoted.rainChance)}%)` : '';
+  const rain = isWet(quoted.rain) ? `, rain ${formatRain(quoted.rain)} mm${chance}` : '';
+  const wind = quoted.speed === null ? null : `${Math.round(quoted.speed)} km/h, gusts ${Math.round(quoted.gust)}${rain}`;
 
   return (
     <section className={collapsed ? 'timebar panel collapsed' : 'timebar panel'}>
@@ -147,6 +153,7 @@ export default function TimeBar({
                   <>
                     <i className="gust" style={{ height: `${(h.gust / scaleMax) * 100}%` }} />
                     <i className="speed" style={{ height: `${Math.max(3, (h.speed / scaleMax) * 100)}%` }} />
+                    {isWet(h.rain) && <i className={`rain ${rainLevel(h.rain)}${h.rainChance < LIKELY_PERCENT ? ' unlikely' : ''}`} />}
                   </>
                 )}
               </div>

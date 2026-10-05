@@ -355,7 +355,7 @@ export default function App() {
     const hours = [];
     for (let time = firstHour; time <= lastHour; time += HOUR) {
       const here = barsLat === null ? null : wind.sample(barsLat, barsLng, time, barsOptions);
-      hours.push({ time, speed: here ? here.speed : null, gust: here ? here.gust : null });
+      hours.push({ time, speed: here ? here.speed : null, gust: here ? here.gust : null, rain: here ? here.rain : NaN, rainChance: here ? here.rainChance : NaN });
     }
     return hours;
   }, [wind, firstHour, lastHour, barsLat, barsLng, barsOptions]);

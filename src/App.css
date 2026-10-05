@@ -340,6 +340,31 @@
   display: none;
 }
 
+/* shown only when rain is on the way */
+.readout-rain {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.readout-rain svg,
+.readout-wet svg {
+  flex: none;
+  color: var(--rain);
+}
+
+.readout-wet {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
 .readout-stats {
   display: grid;
   grid-template-columns: repeat(3, auto);
@@ -690,6 +715,12 @@
   height: 8px;
 }
 
+.route-peaks-rain svg {
+  flex: none;
+  margin: 0 -1px;
+  color: var(--rain);
+}
+
 .route-body {
   margin-top: 6px;
 }
@@ -808,6 +839,14 @@
 .route-advice b {
   font-weight: 600;
   color: var(--ink);
+}
+
+.route-rain {
+  margin-top: 4px;
+}
+
+.route-advice.route-rain svg {
+  color: var(--rain);
 }
 
 .route-point {
@@ -999,6 +1038,27 @@
 }
 
 .bar.past .speed {
+  opacity: 0.45;
+}
+
+/* an hour with rain stands on a teal foot, taller the harder it rains */
+.bar .rain {
+  height: 3px;
+  border-radius: 0;
+  background: var(--rain);
+}
+
+.bar .rain.moderate {
+  height: 6px;
+}
+
+.bar .rain.heavy {
+  height: 10px;
+}
+
+/* rain that few runs of the forecast agree on, and rain that is over */
+.bar .rain.unlikely,
+.bar.past .rain {
   opacity: 0.45;
 }
 
