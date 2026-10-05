@@ -1,6 +1,6 @@
 // The wind that has been downloaded: forecast points on the world lattice, asked for as the app needs them
 // (the place in focus, the route, the saved places, the map view) and kept while they are fresh.
-import { MAX_LEVEL, cellAt, finestIndex, nodeKey, nodePosition, stepOf } from './lattice';
+import { MAX_LEVEL, cellAt, finestIndex, inBounds, nodeKey, nodePosition, stepOf } from './lattice';
 import { pointAt, blendAt } from './windField';
 
 const MINUTE = 60000;
@@ -439,11 +439,20 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     },
 
     /**
-     * A short text that changes whenever one of a set of lattice points arrives, is renewed or goes:
-     * what is worked out from those points alone needs working out again only when it changes.
+     * A short text that changes whenever a forecast point inside `bounds` arrives, is renewed or goes:
+     * what is worked out from the wind of that part of the world alone needs working out again only
+     * when it changes. `bounds` is { south, west, north, east } in degrees.
      */
-    stamp(nodes) {
-      return nodes.map((node) => points.get(nodeKey(node.level, node.row, node.col))?.fetchedAt ?? '-').join(',');
+    stamp(bounds) {
+      let count = 0;
+      let sum = 0;
+      for (const point of points.values()) {
+        const { lat, lng } = nodePosition(0, point.row, point.col);
+        if (!inBounds(bounds, lat, lng)) continue;
+        count++;
+        sum += point.fetchedAt;
+      }
+      return `${count}:${sum}`;
     },
 
     /**

@@ -13,12 +13,12 @@ const held = { stations: kept?.stations ?? null, at: kept?.at ?? 0, triedAt: 0, 
 /**
  * The weather station nearest to a position, with the wind it last measured: { name, km, time, speed,
  * from } (see nearestStation), or null when there is none in range, nothing has been downloaded yet,
- * or `wanted` is false.
+ * or `wanted` is false. Only stations whose last reading is from `since` (unix seconds) on are looked at.
  * The measurements are only downloaded for positions where IPMA has stations, and only while the app
  * is in front. A download that fails is tried again later without a word: this is an extra, and the
  * readout is complete without it.
  */
-export function useObserved(lat, lng, wanted) {
+export function useObserved(lat, lng, wanted, since = 0) {
   const [stations, setStations] = useState(held.stations);
   const inArea = wanted && Number.isFinite(lat) && Number.isFinite(lng) && inIpmaArea(lat, lng);
 
@@ -47,6 +47,8 @@ export function useObserved(lat, lng, wanted) {
     const adopt = () => held.loading?.then(() => alive && setStations(held.stations));
     const tick = () => {
       renew();
+      // a download that finished while this place was not asking is taken over too
+      if (alive) setStations(held.stations);
       adopt();
     };
     tick();
@@ -60,7 +62,7 @@ export function useObserved(lat, lng, wanted) {
   }, [inArea]);
 
   return useMemo(
-    () => (inArea && stations ? nearestStation(stations, lat, lng) : null),
-    [inArea, stations, lat, lng],
+    () => (inArea && stations ? nearestStation(stations.filter((s) => s.time >= since), lat, lng) : null),
+    [inArea, stations, lat, lng, since],
   );
 }

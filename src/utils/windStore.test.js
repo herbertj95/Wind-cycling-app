@@ -241,22 +241,30 @@ describe('downloading what is needed', () => {
 });
 
 describe('stamp', () => {
-  it('changes when the points arrive and when they are renewed, and not when others do', async () => {
+  it('changes when points inside the bounds arrive and when they are renewed, and not when others do', async () => {
     const wind = () => store.getSnapshot();
-    const empty = wind().stamp(LISBON);
+    const lisbon = { south: 38.5, west: -9.5, north: 39, east: -8.9 };
+    const empty = wind().stamp(lisbon);
     store.want('focus', LISBON);
     await settle();
-    const loaded = wind().stamp(LISBON);
+    const loaded = wind().stamp(lisbon);
     expect(loaded).not.toBe(empty);
 
+    // points far away
     store.want('view', row(10));
     await settle();
-    expect(wind().stamp(LISBON)).toBe(loaded);
+    expect(wind().stamp(lisbon)).toBe(loaded);
+
+    // a coarser point inside counts as well
+    store.want('route', nodesAround(2, 38.7, -9.2));
+    await settle();
+    const more = wind().stamp(lisbon);
+    expect(more).not.toBe(loaded);
 
     await settle(STALE_MS + 2 * MINUTE_MS);
     store.refresh();
     await settle();
-    expect(wind().stamp(LISBON)).not.toBe(loaded);
+    expect(wind().stamp(lisbon)).not.toBe(more);
   });
 });
 

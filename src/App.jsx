@@ -10,7 +10,7 @@ import { useWind, useNow } from './hooks/useWind';
 import { useObserved } from './hooks/useObserved';
 import { useSystemBars } from './hooks/useSystemBars';
 import { STALE_MS } from './utils/windStore';
-import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds } from './utils/lattice';
+import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds, stepOf } from './utils/lattice';
 import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
 import { analyseRoute, bestWindows, retracesItself, scanDepartures } from './utils/routeAnalysis';
 import { parseGpxData, reverseRoute } from './utils/gpxParser';
@@ -302,25 +302,44 @@ export default function App() {
   }, [routeTurned, routeHasWind, analysis, forecastAlong, shownTime, rideKmh]);
 
   // The ride as it would go leaving at each hour of the time bar. It is worked out again only when the
-  // forecast along the route changes, not with every download for the rest of the map.
-  // The hour in progress has partly gone: a ride in it leaves now.
+  // forecast for the part of the world the route is in changes, not with every download for the rest of
+  // the map. The hour in progress has partly gone: a ride in it leaves now, worked out every minute.
   const leavingNow = Math.floor(nowSec);
-  const routeStamp = route ? wind.stamp(routeNodes) : '';
+  const routeBounds = useMemo(() => {
+    if (!route) return null;
+    // the forecast points around the route, at the coarsest lattice it reads from
+    const margin = stepOf(routeLevel);
+    const lats = route.points.map((p) => p.lat);
+    const lngs = route.points.map((p) => p.lng);
+    return {
+      south: Math.min(...lats) - margin,
+      north: Math.max(...lats) + margin,
+      west: Math.min(...lngs) - margin,
+      east: Math.max(...lngs) + margin,
+    };
+  }, [route, routeLevel]);
+  const routeStamp = routeBounds ? wind.stamp(routeBounds) : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps -- routeStamp stands for what the scan reads
   const scanForecast = useMemo(() => forecastAlong, [routeStamp, routeLevel]);
-  const departures = useMemo(() => {
+  const hourly = useMemo(() => {
     if (!route) return null;
     const times = [];
     for (let time = firstHour; time <= lastHour; time += HOUR) times.push(time);
-    const starts = times.map((time) => (time === hourBase ? Math.max(time, leavingNow) : time));
-    return scanDepartures(route, scanForecast, starts.map((start) => start / HOUR), rideKmh).map((ride, i) => ({
+    return scanDepartures(route, scanForecast, times.map((time) => time / HOUR), rideKmh).map((ride, i) => ({
       ...ride,
       time: times[i],
       day: formatDay(times[i], zone),
-      past: times[i] < hourBase,
-      dark: darkChecks(route, starts[i], rideKmh),
+      dark: darkChecks(route, times[i], rideKmh),
     }));
-  }, [route, scanForecast, rideKmh, firstHour, lastHour, hourBase, leavingNow, zone]);
+  }, [route, scanForecast, rideKmh, firstHour, lastHour, zone]);
+  const departures = useMemo(() => {
+    if (!hourly) return null;
+    const [leaving] = scanDepartures(route, scanForecast, [leavingNow / HOUR], rideKmh);
+    return hourly.map((ride) => {
+      if (ride.time !== hourBase) return { ...ride, past: ride.time < hourBase };
+      return { ...ride, ...leaving, time: ride.time, past: false, dark: darkChecks(route, leavingNow, rideKmh) };
+    });
+  }, [hourly, route, scanForecast, rideKmh, hourBase, leavingNow]);
 
   // The best time to leave today and tomorrow, and on the day after when the bar holds all of its light.
   const best = useMemo(() => {
@@ -450,7 +469,9 @@ export default function App() {
   // hour. Only while the readout shows the present: a measurement says nothing about tomorrow, nor about
   // a point of the route the rider only gets to later.
   const readingNow = followingNow && !ridePlaying && (focus.type !== 'rider' || riderIdx === 0);
-  const station = useObserved(focusPlace?.lat, focusPlace?.lng, readingNow);
+  // readings older than that are left out, so a station nearby that has gone quiet gives way to the next one
+  const measuredSince = Math.floor((nowSec - MEASURED_MAX_AGE) / 60) * 60;
+  const station = useObserved(focusPlace?.lat, focusPlace?.lng, readingNow, measuredSince);
   const stationNodes = useMemo(() => (station ? nodesAround(0, station.lat, station.lng) : []), [station]);
   useEffect(() => {
     store.want('station', stationNodes);

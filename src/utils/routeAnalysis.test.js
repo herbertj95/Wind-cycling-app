@@ -1169,6 +1169,11 @@ describe('analyseRoute score', () => {
     expect(score(crosswind({ rain: 0, rainChance: 25 }))).toBeCloseTo(0, 6);
   });
 
+  it('takes a chance of 0% at its word', () => {
+    const wet = crosswind({ rain: 0.3, rainChance: 0 });
+    expect(analyseRoute(northbound(), hours(wet, wet, wet, wet), 0, 25).score - CROSS_10).toBeCloseTo(0, 6);
+  });
+
   it('takes rain the forecast puts no chance on for more likely than not', () => {
     const wet = crosswind({ rain: 1.2, rainChance: undefined });
     // 15 * 1 * 0.6
@@ -1348,6 +1353,18 @@ describe('bestWindows', () => {
     // the dark hours do not count
     expect(bestWindows(scan([4, 4.5, 5, 1], { 3: { dark: 1 } }), ['day 0']).windows[0].any).toBe(true);
     expect(bestWindows(scan([4, 4.5, 5, 9]), ['day 0']).windows[0].any).toBe(false);
+    // a lit hour that cannot be chosen for want of a forecast still makes the window less than all day
+    expect(bestWindows(scan([4, 4.5, 5, 4], { 3: { late: true } }), ['day 0']).windows[0].any).toBe(false);
+    // and the rides with the least of the dark are never any time
+    expect(bestWindows(scan([4, 4.5, 5], { 0: { dark: 1 }, 1: { dark: 1 }, 2: { dark: 1 } }), ['day 0']).windows[0].any).toBe(false);
+  });
+
+  it('only looks at the days asked for to tell whether any ride fits in the light', () => {
+    // day 0 all dark, day 1 lit but not asked for: day 0 offers its least dark rides
+    const rides = scan(Array.from({ length: 30 }, () => 4)).map((d, i) => ({ ...d, dark: i < 18 ? 1 + (i % 2) : 0 }));
+    const { windows, unlit } = bestWindows(rides, ['day 0']);
+    expect(windows.map((w) => w.day)).toEqual(['day 0']);
+    expect(unlit).toEqual([]);
   });
 
   it('is empty when there is nothing to choose from', () => {

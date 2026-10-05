@@ -68,7 +68,7 @@ function rainLoad(mm, chance) {
   const level = rainLevel(mm);
   const weight = level !== 'none' ? RAIN_WEIGHT[level] : chance >= LIKELY_PERCENT ? RAIN_WEIGHT.light : 0;
   if (weight === 0) return 0;
-  return weight * (chance > 0 ? chance / 100 : UNKNOWN_CHANCE);
+  return weight * (Number.isFinite(chance) ? chance / 100 : UNKNOWN_CHANCE);
 }
 
 /**
@@ -452,16 +452,16 @@ export function scanDepartures(route, forecast, starts, rideKmh = 25) {
  *   ride in the light from start to finish)
  * - days: the days to look at, in order
  * Only rides in the light from start to finish are offered. When no ride of the whole scan fits in the
- * light (a route too long for the day), each day offers those with the least of the dark instead.
+ * light on any of the days (a route too long for the day), each day offers those with the least of the dark instead.
  * `windows` holds a window for each day that has one, in the order of `days`: { day, from, to, best,
  * any }. `best` is the easiest ride of the day (the earlier one wins a tie), and `from` and `to` the
  * first and the last of the hours in a row around it that are within 1.5 of its score. `any` says the
- * window holds every hour of the day there is light for, and at least three of them.
+ * window holds every hour left of the day that there is light for, and at least three of them.
  * `unlit` lists the days that still have rides to choose from, but none in the light.
  */
 export function bestWindows(departures, days) {
   const open = (d) => d.known && !d.late && !d.past && Number.isFinite(d.score);
-  const lit = departures.some((d) => open(d) && d.dark === 0);
+  const lit = departures.some((d) => days.includes(d.day) && open(d) && d.dark === 0);
   const windows = [];
   const unlit = [];
   for (const day of days) {
@@ -491,7 +491,7 @@ export function bestWindows(departures, days) {
       from: departures[from].time,
       to: departures[to].time,
       best: departures[best].time,
-      any: to - from + 1 >= ANY_TIME_HOURS && fit.every((i) => i >= from && i <= to),
+      any: lit && to - from + 1 >= ANY_TIME_HOURS && departures.every((d, i) => d.day !== day || d.past || d.dark > 0 || (i >= from && i <= to)),
     });
   }
   return { windows, unlit };
