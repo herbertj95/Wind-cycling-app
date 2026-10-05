@@ -1,4 +1,5 @@
-import { CaretDown, CaretUp, Drop, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
+import { Fragment } from 'react';
+import { ArrowsLeftRight, CaretDown, CaretUp, Drop, Pause, Play, Star, Warning, Wind, X } from '@phosphor-icons/react';
 import RouteChart from './RouteChart';
 import { RIDE_SPEEDS, windPeaks } from '../utils/routeAnalysis';
 import { formatRain, isWet } from '../utils/rain';
@@ -29,6 +30,9 @@ const NO_WIND_TEXT = {
  * a plain-language verdict, and the profile you can ride along.
  * - analysis: from analyseRoute
  * - windState: how far the forecast along the route is, 'ready' | 'loading' | 'failed'
+ * - bestTimes: the best hour to leave on each of the coming days, [{ time, day, clock }] with `day` as
+ *   'today', 'tomorrow' or a date and `clock` as "09:00" or 'now'; leavingAt is the hour chosen now
+ * - flipHint: what riding the route the other way round would be like at this hour, 'easier' | 'harder' | null
  * - collapsed: only the name, the buttons and the wind along the route as a low strip are shown, to
  *   leave the map free
  * - colors: { tail, neutral, head } for the current theme
@@ -47,6 +51,11 @@ export default function RoutePanel({
   rideKmh,
   onRideKmh,
   startLabel,
+  bestTimes,
+  leavingAt,
+  onLeaveAt,
+  onFlip,
+  flipHint,
   collapsed,
   onToggleCollapsed,
   colors,
@@ -73,7 +82,20 @@ export default function RoutePanel({
     <section className={collapsed ? 'route-panel panel collapsed' : 'route-panel panel'}>
       <div className="route-head">
         <h2 title={route.name}>{route.name}</h2>
-        <span className="route-meta">{route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing</span>
+        <span className="route-meta">
+          {route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing{route.reversed && ', reversed'}
+        </span>
+        <button
+          type="button"
+          className="route-flip"
+          onClick={onFlip}
+          title="Ride this route the other way round"
+          aria-label={flipHint ? `Reverse the route: ${flipHint} that way at this hour` : 'Reverse the route'}
+        >
+          <ArrowsLeftRight size={15} aria-hidden="true" />
+          <span>Reverse</span>
+          {flipHint && <small>{flipHint} that way</small>}
+        </button>
         <div className="route-actions">
           <button type="button" className="pill-button" onClick={onTogglePlay} aria-label={playing ? 'Pause the ride' : 'Ride the route'}>
             {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
@@ -150,6 +172,28 @@ export default function RoutePanel({
                   {analysis.beyondForecast && ' The ride ends after the forecast does.'}
                   {analysis.outsideKm > total * 0.05 && (windState === 'loading' ? ' Part of the wind is still loading.' : ' Part of it has no forecast.')}
                 </p>
+
+                {bestTimes.length > 0 && (
+                  <p className="route-best">
+                    <Star size={13} weight="fill" aria-hidden="true" />
+                    <span>
+                      Best time to leave:{' '}
+                      {bestTimes.map((best, i) => {
+                        const when = best.clock === 'now' ? 'now' : `${best.day} ${best.clock}`;
+                        return (
+                          <Fragment key={best.time}>
+                            {i > 0 && ', '}
+                            {/* the one the plan is for is not a button: there is nothing left to choose */}
+                            {best.time === leavingAt
+                              ? <b>{when}</b>
+                              : <button type="button" className="text-button" onClick={() => onLeaveAt(best.time)}>{when}</button>}
+                          </Fragment>
+                        );
+                      })}
+                      .
+                    </span>
+                  </p>
+                )}
 
                 {shareBar}
                 <Shares analysis={analysis} parts={parts} total={total} />
@@ -231,7 +275,12 @@ function Shares({ analysis, parts, total }) {
 
       <p className={`route-advice ${advisory.tone}`}>
         <AdviceIcon size={16} aria-hidden="true" />
-        <span><b>{advisory.title}.</b> <span className="advice-text">{advisory.text}</span></span>
+        <span>
+          <b>{advisory.title}.</b>
+          {analysis.orderNote && <> <span className="advice-order">{analysis.orderNote}</span></>}
+          {' '}
+          <span className="advice-text">{advisory.text}</span>
+        </span>
       </p>
 
       {/* only on a ride with rain, or a real chance of it */}

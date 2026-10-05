@@ -70,6 +70,12 @@ export function hourStart(unixSeconds, zone) {
   return Math.floor((unixSeconds + offset) / 3600) * 3600 - offset;
 }
 
+/** The hour a clock in the zone shows at a moment, 0 to 23. */
+export function clockHour(unixSeconds, zone) {
+  const local = unixSeconds + zoneOffset(unixSeconds, zone);
+  return Math.floor((((local % 86400) + 86400) % 86400) / 3600);
+}
+
 /**
  * "GMT+2" when the zone's clock differs from this device's at that moment, otherwise an empty string:
  * a time is only labelled with its zone when it could be mistaken for the reader's own.

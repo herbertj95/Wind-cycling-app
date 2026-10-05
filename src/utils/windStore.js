@@ -25,7 +25,7 @@ const SPENT_KEY = 'wind-spent-v1';
 // the single-area forecast that versions before the world lattice kept
 const OLD_STORAGE_KEY = 'wind-forecast-v2';
 // which need is served first when not everything can be asked for at once
-const ORDER = ['focus', 'route', 'places', 'view'];
+const ORDER = ['focus', 'route', 'station', 'places', 'view'];
 const ALL_LEVELS = Array.from({ length: MAX_LEVEL + 1 }, (_, level) => level);
 
 const deviceStorage = {
@@ -460,7 +460,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
   return {
     /**
      * Says which lattice points a part of the app needs ([{ level, row, col }]), replacing what it needed before.
-     * Names: 'focus', 'route', 'places', 'view'. `delay` (ms) waits before asking, for needs that change quickly.
+     * Names: 'focus', 'route', 'station', 'places', 'view'. `delay` (ms) waits before asking, for needs that change quickly.
      */
     want(name, nodes, delay = 0) {
       const wanted = new Map();

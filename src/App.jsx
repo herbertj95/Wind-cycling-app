@@ -7,15 +7,17 @@ import RoutePanel from './components/RoutePanel';
 import RoutesMenu from './components/RoutesMenu';
 import PlacesMenu from './components/PlacesMenu';
 import { useWind, useNow } from './hooks/useWind';
+import { useObserved } from './hooks/useObserved';
 import { useSystemBars } from './hooks/useSystemBars';
 import { STALE_MS } from './utils/windStore';
 import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds } from './utils/lattice';
 import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
-import { analyseRoute } from './utils/routeAnalysis';
-import { parseGpxData } from './utils/gpxParser';
+import { analyseRoute, bestDepartures, scanDepartures } from './utils/routeAnalysis';
+import { parseGpxData, reverseRoute } from './utils/gpxParser';
+import { rideLight } from './utils/sun';
 import { CALM_KMH } from './utils/wind';
 import { MAP_THEMES, effectColor, routeGradient } from './utils/mapStyle';
-import { DEVICE_ZONE, formatClock, formatDayClock, hourStart, validZone, zoneLabel } from './utils/time';
+import { DEVICE_ZONE, formatClock, formatDay, formatDayClock, hourStart, validZone, zoneLabel } from './utils/time';
 import './App.css';
 
 const HOUR = 3600;
@@ -50,6 +52,10 @@ const START_HOLD_MS = 1200;
 // A reading for one place only comes from forecast points at most 0.125° apart, never from the coarser ones
 // of a zoomed-out view
 const POINT = { maxLevel: 0 };
+// The other direction of a route is called easier, or harder, when its score (see analyseRoute) differs by this much
+const FLIP_MARGIN = 1.5;
+// A measurement older than this is no longer the wind of now
+const MEASURED_MAX_AGE = 3 * HOUR;
 
 function initialTheme() {
   try {
@@ -157,6 +163,7 @@ export default function App() {
   // true once the user (or a successful start-up GPS fix) has decided what the map shows
   const viewClaimed = useRef(false);
   const loadId = useRef(0);
+  const trackCount = useRef(0);
   const riderIdxRef = useRef(0);
   // counts the times the rider was placed by hand or by opening a route, see the playback below
   const rideRun = useRef(0);
@@ -271,15 +278,59 @@ export default function App() {
 
   const routeNodes = useMemo(() => (route ? nodesAlong(route.points, ROUTE_MAX_POINTS) : []), [route]);
   const routeLevel = routeNodes.length > 0 ? routeNodes[0].level : 0;
-  const analysis = useMemo(() => {
-    if (!route) return null;
-    // the rider is somewhere else at every moment, so each point of the route is read at its own time
-    const forecast = { sample: (lat, lng, hour) => wind.sample(lat, lng, hour * HOUR, { maxLevel: routeLevel, late: true }) };
-    return analyseRoute(route, forecast, shownTime / HOUR, rideKmh);
-  }, [route, routeLevel, wind, shownTime, rideKmh]);
+  // the rider is somewhere else at every moment, so each point of a route is read at its own time
+  const forecastAlong = useMemo(
+    () => ({ sample: (lat, lng, hour) => wind.sample(lat, lng, hour * HOUR, { maxLevel: routeLevel, late: true }) }),
+    [wind, routeLevel],
+  );
+  const analysis = useMemo(
+    () => (route ? analyseRoute(route, forecastAlong, shownTime / HOUR, rideKmh) : null),
+    [route, forecastAlong, shownTime, rideKmh],
+  );
   // a route with no forecast for most of its length has no wind to colour it with
   const routeHasWind = analysis !== null && analysis.outsideKm < route.totalDistance * 0.5;
   const routeState = wind.state(routeNodes);
+
+  // The same ride the other way round, at the same moment: 'easier', 'harder' or null when there is
+  // little in it. It reads the same forecast points, so it costs no download.
+  const routeTurned = useMemo(() => (route ? reverseRoute(route) : null), [route]);
+  const flipHint = useMemo(() => {
+    if (!routeTurned || !routeHasWind) return null;
+    const turned = analyseRoute(routeTurned, forecastAlong, shownTime / HOUR, rideKmh);
+    if (turned.score <= analysis.score - FLIP_MARGIN) return 'easier';
+    return turned.score >= analysis.score + FLIP_MARGIN ? 'harder' : null;
+  }, [routeTurned, routeHasWind, analysis, forecastAlong, shownTime, rideKmh]);
+
+  // The ride as it would go leaving at each hour of the time bar, and the best of them on each day.
+  // The hour in progress has partly gone: a ride in it leaves now.
+  const leavingNow = Math.floor(nowSec);
+  const departures = useMemo(() => {
+    if (!route) return null;
+    const times = [];
+    for (let time = firstHour; time <= lastHour; time += HOUR) times.push(time);
+    const starts = times.map((time) => (time === hourBase ? Math.max(time, leavingNow) : time));
+    const from = route.points[0];
+    const to = route.points[route.points.length - 1];
+    const rideSeconds = (route.totalDistance / rideKmh) * HOUR;
+    return scanDepartures(route, forecastAlong, starts.map((start) => start / HOUR), rideKmh).map((ride, i) => ({
+      ...ride,
+      time: times[i],
+      day: formatDay(starts[i], zone),
+      past: times[i] < hourBase,
+      light: rideLight(starts[i], starts[i] + rideSeconds, from, to),
+    }));
+  }, [route, forecastAlong, rideKmh, firstHour, lastHour, hourBase, leavingNow, zone]);
+
+  const bestTimes = useMemo(() => {
+    if (!departures) return [];
+    const today = formatDay(leavingNow, zone);
+    const tomorrow = formatDay(leavingNow + 24 * HOUR, zone);
+    return bestDepartures(departures).map((ride) => ({
+      time: ride.time,
+      day: ride.day === today ? 'today' : ride.day === tomorrow ? 'tomorrow' : ride.day,
+      clock: ride.time === hourBase ? 'now' : formatClock(ride.time, zone),
+    }));
+  }, [departures, leavingNow, hourBase, zone]);
 
   const routeStops = useMemo(() => {
     if (!route || !analysis || !routeHasWind) return null;
@@ -355,7 +406,14 @@ export default function App() {
     const hours = [];
     for (let time = firstHour; time <= lastHour; time += HOUR) {
       const here = barsLat === null ? null : wind.sample(barsLat, barsLng, time, barsOptions);
-      hours.push({ time, speed: here ? here.speed : null, gust: here ? here.gust : null, rain: here ? here.rain : NaN, rainChance: here ? here.rainChance : NaN });
+      hours.push({
+        time,
+        speed: here ? here.speed : null,
+        gust: here ? here.gust : null,
+        from: here ? here.from : null,
+        rain: here ? here.rain : NaN,
+        rainChance: here ? here.rainChance : NaN,
+      });
     }
     return hours;
   }, [wind, firstHour, lastHour, barsLat, barsLng, barsOptions]);
@@ -369,6 +427,26 @@ export default function App() {
   useEffect(() => {
     store.want('route', routeNodes);
   }, [store, routeNodes]);
+
+  // ----- measured wind -----
+  // What the nearest weather station measured, beside what the forecast said for that station and that
+  // hour. Only while the readout shows the present: a measurement says nothing about tomorrow.
+  const station = useObserved(focusPlace?.lat, focusPlace?.lng, followingNow && !ridePlaying);
+  const stationNodes = useMemo(() => (station ? nodesAround(0, station.lat, station.lng) : []), [station]);
+  useEffect(() => {
+    store.want('station', stationNodes);
+  }, [store, stationNodes]);
+  const measured = useMemo(() => {
+    if (!station || nowSec - station.time > MEASURED_MAX_AGE || station.time > nowSec + HOUR) return null;
+    return {
+      name: station.name,
+      km: station.km,
+      clock: formatClock(station.time, zone),
+      speed: station.speed,
+      from: station.from,
+      forecast: wind.sample(station.lat, station.lng, station.time, POINT)?.speed ?? null,
+    };
+  }, [station, nowSec, zone, wind]);
 
   // The map view only counts once it has stopped moving. It is covered by the finest lattice that does
   // not take more points than the allowance for a view.
@@ -482,7 +560,8 @@ export default function App() {
   const openRoute = useCallback((parsed) => {
     viewClaimed.current = true;
     rideRun.current++;
-    setRoute(parsed);
+    // `track` tells the map one opened route from another, whichever way round it is ridden
+    setRoute({ ...parsed, track: ++trackCount.current });
     setRiderIdx(0);
     setRidePlaying(false);
     setFocus(toRider);
@@ -535,6 +614,16 @@ export default function App() {
     if (!target || (view && !mapMoving && inBounds(view.bounds, target.lat, target.lng))) return;
     // it is somewhere else: wait a frame, so the route panel is gone before the map measures the room it has
     requestAnimationFrame(() => mapRef.current?.focusOn(target.lat, target.lng, 10));
+  };
+
+  // the same route ridden the other way: the plan starts over from the new start
+  const flipRoute = () => {
+    if (!routeTurned) return;
+    rideRun.current++;
+    setRoute(routeTurned);
+    setRiderIdx(0);
+    setRidePlaying(false);
+    setFocus(toRider);
   };
 
   const lastRoutePoint = route ? route.points.length - 1 : 0;
@@ -789,6 +878,7 @@ export default function App() {
         stale={readingStale}
         quiet={isRiding || forecastPlaying}
         place={savable}
+        measured={measured}
         onSave={saveFocus}
         onRemove={removeFocus}
         onRetry={store.retry}
@@ -910,6 +1000,11 @@ export default function App() {
             rideKmh={rideKmh}
             onRideKmh={setRideKmh}
             startLabel={followingNow ? `now (${formatClock(shownTime, zone)})` : formatDayClock(shownTime, zone)}
+            bestTimes={bestTimes}
+            leavingAt={selectedHour}
+            onLeaveAt={selectHour}
+            onFlip={flipRoute}
+            flipHint={flipHint}
             collapsed={folded.route}
             onToggleCollapsed={() => setFolded((prev) => ({ ...prev, route: !prev.route }))}
             colors={colors}
@@ -917,6 +1012,8 @@ export default function App() {
         )}
         <TimeBar
           hours={series}
+          rides={followingRider ? departures : null}
+          bestTimes={bestTimes}
           selected={selectedHour}
           nowTime={hourBase}
           shownTime={shownTime}

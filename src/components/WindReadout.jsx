@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { BookmarkSimple, CaretDown, CaretUp, Drop, WifiSlash } from '@phosphor-icons/react';
+import { BookmarkSimple, CaretDown, CaretUp, Drop, Gauge, WifiSlash } from '@phosphor-icons/react';
 import WindDial from './WindDial';
 import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees } from '../utils/wind';
 import { describeRain, formatRain, isWet } from '../utils/rain';
+import { compareWithForecast } from '../utils/ipma';
 
 const PROBLEM_TEXT = {
   offline: 'The wind forecast could not be loaded. Check your connection.',
@@ -31,11 +32,14 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
  * - stale: the forecast being shown is due for renewal and could not be renewed
  * - place: what can be done with the place in focus, or null when it cannot be saved (the rider on a route):
  *   { key, saved, name }. `name` is the name it would be saved under when it already has one.
+ * - measured: what the nearest weather station last measured, or null: { name, km, clock, speed, from,
+ *   forecast }, with `from` null for a wind without a direction and `forecast` the km/h the forecast
+ *   gave for that station and hour, or null
  * - quiet: the numbers are changing continuously (playback), so screen readers are not told each step
  * - collapsed: the reading is shown on one line, to leave the map free. It only folds while there is a
  *   reading: a message about a missing forecast is always shown whole.
  */
-export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
+export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, measured, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
   // the key of the place whose name is being typed; a different place in focus closes the form by itself
   const [namingKey, setNamingKey] = useState(null);
   const [name, setName] = useState('');
@@ -48,6 +52,12 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
   const folded = collapsed && hasReading;
   // null on a dry hour: the panel only grows a line when rain is on the way
   const rain = hasReading ? describeRain(reading.rain, reading.rainChance) : null;
+  // the wind a station nearby measured, and how the forecast for that station did
+  const station = hasReading && measured ? {
+    wind: `${Math.round(measured.speed)} km/h${measured.from !== null && measured.speed >= CALM_KMH ? ` ${compassPoint(measured.from)}` : ''}`,
+    verdict: compareWithForecast(measured.speed, measured.forecast),
+    where: `${measured.name}, ${measured.km < 1 ? 'under 1' : Math.round(measured.km)} km away`,
+  } : null;
 
   // the panel hangs from the top of the screen: it folds upwards and opens downwards
   const foldButton = hasReading && (
@@ -67,7 +77,7 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
   const spokenReading = (
     <p className="visually-hidden" aria-live="polite" aria-atomic="true">
       {hasReading && !quiet
-        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}${rain ? ` ${rain}.` : ''}`
+        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}${rain ? ` ${rain}.` : ''}${station ? ` Measured ${station.wind} at ${measured.clock}${station.verdict ? `, ${station.verdict}` : ''}, at ${station.where}.` : ''}`
         : ''}
     </p>
   );
@@ -193,6 +203,19 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
             <p className="readout-rain">
               <Drop size={15} weight="fill" aria-hidden="true" />
               {rain}
+            </p>
+          )}
+
+          {/* only where a weather station is near, and only for the present */}
+          {station && (
+            <p className="readout-measured">
+              <Gauge size={15} aria-hidden="true" />
+              <span>
+                Measured <b>{station.wind}</b> at {measured.clock}
+                {station.verdict && `, ${station.verdict}`}
+                {station.verdict && station.verdict !== 'as forecast' && ` (${Math.round(measured.forecast)})`}
+                <small>{station.where}. Source: IPMA</small>
+              </span>
             </p>
           )}
 

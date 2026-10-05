@@ -355,6 +355,33 @@
   color: var(--rain);
 }
 
+/* what a weather station nearby measured, with the place it stands in smaller type under it */
+.readout-measured {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.readout-measured svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-2);
+}
+
+.readout-measured b {
+  font-weight: 600;
+}
+
+.readout-measured small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
 .readout-wet {
   display: inline-flex;
   flex: none;
@@ -749,6 +776,31 @@
   text-overflow: ellipsis;
 }
 
+/* turns the route round; says so when the other way is the easier or the harder one */
+.route-flip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.route-flip span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.route-flip small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
 .route-actions {
   display: flex;
   flex: none;
@@ -776,6 +828,29 @@
 .route-plan select option {
   background: var(--page);
   color: var(--ink);
+}
+
+/* the best hour to leave on each of the coming days, each a button that picks it */
+.route-best {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.route-best svg {
+  flex: none;
+  align-self: center;
+  color: var(--ink);
+}
+
+.route-best b,
+.route-best .text-button {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
 }
 
 .share-bar {
@@ -838,6 +913,11 @@
 
 .route-advice b {
   font-weight: 600;
+  color: var(--ink);
+}
+
+/* which part of the ride has the wind against it */
+.advice-order {
   color: var(--ink);
 }
 
@@ -1002,13 +1082,14 @@
   align-items: center;
 }
 
+/* the bars, with a row above them for the wind arrows and one under them for the dates */
 .timebar-bars {
   position: relative;
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 58px;
-  padding-bottom: 14px;
+  height: 70px;
+  padding: 12px 0 14px;
   border-radius: 4px;
   cursor: pointer;
   touch-action: none;
@@ -1060,6 +1141,91 @@
 .bar .rain.unlikely,
 .bar.past .rain {
   opacity: 0.45;
+}
+
+/* Which way the wind blows, over the bar of that hour; a dot for still air. Wider than a bar on a
+   phone, so they are only drawn every few hours. */
+.bar-wind,
+.bar-best {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  margin: 0 0 1px -5.5px;
+  color: var(--ink-2);
+}
+
+.bar-calm {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.bar.past .bar-wind,
+.bar.past .bar-calm {
+  opacity: 0.45;
+}
+
+.bar.selected .bar-wind {
+  color: var(--ink);
+}
+
+/* the best hour of a day to set off */
+.bar-best {
+  color: var(--ink);
+}
+
+/* With a route, a bar is the ride that sets off then: red upwards for the wind against the rider,
+   blue downwards for the wind behind, from a line across the middle. */
+.timebar-bars.rides::before {
+  content: '';
+  position: absolute;
+  top: calc(12px + (100% - 26px) / 2);
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--hair);
+  pointer-events: none;
+}
+
+.bar .against {
+  bottom: 50%;
+  background: var(--head);
+}
+
+.bar .behind {
+  top: 50%;
+  bottom: auto;
+  border-radius: 0 0 2px 2px;
+  background: var(--tail);
+}
+
+/* a ride that meets rain carries it along its top, like the folded strip of the route */
+.timebar-bars.rides .bar .rain {
+  top: 0;
+  bottom: auto;
+}
+
+.bar.past .against,
+.bar.past .behind,
+.bar.late .against,
+.bar.late .behind {
+  opacity: 0.45;
+}
+
+.timebar-bars.rides .bar.selected {
+  border-radius: 2px;
+  background: var(--track);
+}
+
+.timebar-bars.rides .bar.empty:not(.selected)::after {
+  bottom: calc(50% - 1px);
 }
 
 /* an hour whose wind is not loaded keeps its place as a faint mark */
@@ -1455,9 +1621,15 @@
     font-size: 15px;
   }
 
+  /* the second line is shared by the distance and the button that turns the route round */
   .route-meta {
     order: 3;
-    flex-basis: 100%;
+    flex: 1 1 0;
+    font-size: 12px;
+  }
+
+  .route-flip {
+    order: 4;
     font-size: 12px;
   }
 
@@ -1479,8 +1651,13 @@
     margin-top: 6px;
   }
 
-  .route-plan {
+  .route-plan,
+  .route-best {
     font-size: 12px;
+  }
+
+  .route-best {
+    margin-top: 2px;
   }
 
   .share-key {
@@ -1499,7 +1676,17 @@
   }
 
   .dock:has(.route-panel) .timebar-bars {
-    height: 46px;
+    height: 58px;
+  }
+
+  /* the name of the station is left to the wider screens */
+  .readout-measured {
+    margin-top: 6px;
+    font-size: 13px;
+  }
+
+  .readout-measured small {
+    display: none;
   }
 }
 
@@ -1537,7 +1724,9 @@
   .readout-stats,
   .readout-note,
   .readout-hint,
+  .readout-measured small,
   .route-plan,
+  .route-best,
   .share-key,
   .route-advice,
   .route-point {
@@ -1553,7 +1742,7 @@
   }
 
   .timebar-bars {
-    height: 40px;
+    height: 52px;
   }
 }
 
@@ -1579,12 +1768,19 @@
     height: 44px;
   }
 
+  /* as tall as a finger without making its line taller */
+  .route-flip {
+    padding: 14px 0 14px 8px;
+    margin: -14px 0;
+  }
+
   .route-plan select {
     min-height: 40px;
     padding: 0 6px;
   }
 
   .timebar-label .text-button,
+  .route-best .text-button,
   .readout .text-button,
   .notice .text-button,
   .map-status .text-button {

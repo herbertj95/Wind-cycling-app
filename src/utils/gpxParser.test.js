@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { calculateDistance, calculateBearing, parseGpxData, PRESET_ROUTES } from './gpxParser';
+import { calculateDistance, calculateBearing, parseGpxData, reverseRoute, PRESET_ROUTES } from './gpxParser';
 
 // One degree of latitude on the 6371 km sphere the parser uses: 6371 * pi / 180
 const KM_PER_DEGREE = 111.19492664455873;
@@ -717,6 +717,147 @@ describe('parseGpxData', () => {
       const still = Array.from({ length: 10 }, () => ({ lat: 38.6, lng: -9.2 }));
       expect(() => parseGpxData(gpxTrack(still))).toThrow('too short');
     });
+  });
+});
+
+describe('parseGpxData descent', () => {
+  it('measures the descent like the climbing: it is the climbing of the way back', () => {
+    // 1 m down per point for 100 points, 11 m apart; and the same slope ridden up
+    const down = parseGpxData(gpxTrack(northLine(101, 0.0001, (i) => 200 - i)));
+    const up = parseGpxData(gpxTrack(northLine(101, 0.0001, (i) => 100 + i)));
+    expect(down.totalElevationGain).toBe(0);
+    expect(up.totalElevationLoss).toBe(0);
+    expect(down.totalElevationLoss).toBe(up.totalElevationGain);
+    // the smoothing rounds off the two ends of the slope
+    expect(Math.abs(down.totalElevationLoss - 100)).toBeLessThanOrEqual(3);
+    // up 60 m, then down 25 m
+    const over = parseGpxData(gpxTrack(northLine(86, 0.0001, (i) => (i <= 60 ? 100 + i : 220 - i))));
+    expect(Math.abs(over.totalElevationGain - 60)).toBeLessThanOrEqual(3);
+    expect(Math.abs(over.totalElevationLoss - 25)).toBeLessThanOrEqual(3);
+  });
+
+  it('counts the descent on each side of a jump, not the height difference across it', () => {
+    // flat at 300 m, a 13 km jump, flat at 10 m: nothing was descended
+    const flat = parseGpxData(gpxTrack([
+      ...Array.from({ length: 40 }, (_, i) => ({ lat: 38.6 + i * 0.0003, lng: -9.2, ele: 300 })),
+      ...Array.from({ length: 40 }, (_, i) => ({ lat: 38.7, lng: -9.1 + i * 0.0004, ele: 10 })),
+    ]));
+    expect(flat.totalElevationLoss).toBe(0);
+    expect(flat.totalElevationGain).toBe(0);
+  });
+});
+
+describe('reverseRoute', () => {
+  // 40 points north 33 m apart climbing 1 m each, then 40 points east 35 m apart descending 0.5 m each
+  const corner = () => parseGpxData(gpxTrack([
+    ...Array.from({ length: 40 }, (_, i) => ({ lat: 38.6 + i * 0.0003, lng: -9.2, ele: 10 + i })),
+    ...Array.from({ length: 40 }, (_, i) => ({ lat: 38.6117, lng: -9.2 + (i + 1) * 0.0004, ele: 49 - (i + 1) * 0.5 })),
+  ]), 'Corner');
+
+  // 200 points 11.1 m apart heading north, a 5.5 km jump (a ferry), then 200 more
+  const withFerry = () => {
+    const points = [];
+    for (let i = 0; i < 200; i++) points.push({ lat: 38.6 + i * 0.0001, lng: -9.2, ele: 10 });
+    for (let i = 0; i < 200; i++) points.push({ lat: 38.67 + i * 0.0001, lng: -9.2, ele: 10 });
+    return parseGpxData(gpxTrack(points));
+  };
+
+  it('starts where the route finished and counts the distance from there', () => {
+    const route = corner();
+    const back = reverseRoute(route);
+    const n = route.points.length;
+    expect(back.points).toHaveLength(n);
+    expect(back.totalDistance).toBe(route.totalDistance);
+    expect(back.points[0].distance).toBe(0);
+    expect(back.points[n - 1].distance).toBeCloseTo(route.totalDistance, 9);
+    back.points.forEach((p, i) => {
+      const was = route.points[n - 1 - i];
+      expect([p.lat, p.lng, p.ele]).toEqual([was.lat, was.lng, was.ele]);
+      expect(p.distance).toBeCloseTo(route.totalDistance - was.distance, 9);
+      if (i > 0) expect(p.distance).toBeGreaterThanOrEqual(back.points[i - 1].distance);
+    });
+  });
+
+  it('turns every heading round', () => {
+    const route = corner();
+    const back = reverseRoute(route);
+    const n = route.points.length;
+    // (a heading and the heading back differ from 180 degrees by a hair, on a sphere)
+    back.points.forEach((p, i) => {
+      expect(bearingGap(p.bearing, route.points[n - 1 - i].bearing + 180)).toBeLessThan(0.01);
+    });
+    // it sets off west along what was the last leg, and ends heading south
+    expect(bearingGap(back.points[0].bearing, 270)).toBeLessThan(0.1);
+    expect(bearingGap(back.points[n - 1].bearing, 180)).toBeLessThan(0.1);
+  });
+
+  it('swaps the climbing and the descent', () => {
+    // 39 m up along the first leg, 20 m down along the second
+    const route = corner();
+    expect(Math.abs(route.totalElevationGain - 39)).toBeLessThanOrEqual(3);
+    expect(Math.abs(route.totalElevationLoss - 20)).toBeLessThanOrEqual(3);
+    const back = reverseRoute(route);
+    expect(back.totalElevationGain).toBe(route.totalElevationLoss);
+    expect(back.totalElevationLoss).toBe(route.totalElevationGain);
+  });
+
+  it('turns the drawn line round as well, so each point keeps its place on it', () => {
+    const route = corner();
+    const back = reverseRoute(route);
+    expect(back.pathLength).toBe(route.pathLength);
+    expect(back.parts).toHaveLength(1);
+    expect(back.parts[0]).toEqual([...route.parts[0]].reverse());
+    expect(back.points[0].pathKm).toBeCloseTo(0, 9);
+    expect(back.points[back.points.length - 1].pathKm).toBeCloseTo(route.pathLength, 9);
+    for (let i = 1; i < back.points.length; i++) {
+      expect(back.points[i].pathKm).toBeGreaterThanOrEqual(back.points[i - 1].pathKm);
+    }
+  });
+
+  it('moves the mark of a jump to the point that now comes after it', () => {
+    const route = withFerry();
+    const back = reverseRoute(route);
+    const gaps = back.points.filter((p) => p.gap);
+    expect(gaps).toHaveLength(1);
+    // the other way round the ferry is boarded at 38.67 and left at 38.6199
+    const at = back.points.indexOf(gaps[0]);
+    expect(gaps[0].lat).toBeCloseTo(38.6199, 6);
+    expect(back.points[at - 1].lat).toBeCloseTo(38.67, 6);
+    expect(gaps[0].distance).toBeCloseTo(back.points[at - 1].distance, 9);
+    expect(back.totalDistance).toBeCloseTo(4.4256, 2);
+    // the two stretches are drawn in the new order, each from its new start
+    expect(back.parts).toHaveLength(2);
+    expect(back.parts[0][0][1]).toBeCloseTo(38.6899, 6);
+    expect(back.parts[1][back.parts[1].length - 1]).toEqual([-9.2, 38.6]);
+    // and no heading is taken across the water: both stretches run south
+    back.points.forEach((p) => expect(bearingGap(p.bearing, 180)).toBeLessThan(0.1));
+  });
+
+  it('says which way the route runs, and gives the first direction back when reversed twice', () => {
+    const route = corner();
+    const back = reverseRoute(route);
+    expect(route.reversed).toBeFalsy();
+    expect(back.reversed).toBe(true);
+    const again = reverseRoute(back);
+    expect(again.reversed).toBe(false);
+    expect(again.parts).toEqual(route.parts);
+    expect(again.totalElevationGain).toBe(route.totalElevationGain);
+    again.points.forEach((p, i) => {
+      const was = route.points[i];
+      expect([p.lat, p.lng, p.ele, p.gap]).toEqual([was.lat, was.lng, was.ele, was.gap]);
+      expect(p.distance).toBeCloseTo(was.distance, 9);
+      expect(p.pathKm).toBeCloseTo(was.pathKm, 9);
+      expect(bearingGap(p.bearing, was.bearing)).toBeLessThan(1e-6);
+    });
+  });
+
+  it('keeps the name and whatever else the route carries, and leaves the route it was given alone', () => {
+    const route = { ...corner(), id: 'corner' };
+    const before = JSON.stringify(route);
+    const back = reverseRoute(route);
+    expect(back.name).toBe('Corner');
+    expect(back.id).toBe('corner');
+    expect(JSON.stringify(route)).toBe(before);
   });
 });
 

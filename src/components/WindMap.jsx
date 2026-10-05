@@ -31,6 +31,8 @@ export default function WindMap({
   const mapRef = useRef(null);
   const initial = useRef({ theme, flowEnabled, view: initialView });
   const handlers = useRef({ onPick, onSpot, onUserMove, onMoveStart, onViewChange, getPadding, getCovered });
+  // the track on the map (see `track` in App's openRoute): the same one turned round is not flown to again
+  const shownTrack = useRef(null);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
@@ -86,7 +88,9 @@ export default function WindMap({
   }, [spots]);
 
   useEffect(() => {
-    mapRef.current?.setRoute(route);
+    const track = route?.track ?? null;
+    mapRef.current?.setRoute(route, { fit: track === null || track !== shownTrack.current });
+    shownTrack.current = track;
   }, [route]);
 
   useEffect(() => {
