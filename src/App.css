@@ -787,6 +787,9 @@
 
 /* turns the route round; says so when the other way is clearly easier */
 .route-flip {
+  /* above the line under it, which its enlarged touch area reaches into */
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -1058,7 +1061,7 @@
   white-space: nowrap;
 }
 
-.timebar-label span {
+.timebar-label > span {
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
@@ -1562,6 +1565,18 @@
     display: inline;
   }
 
+  /* the numbers stay whole; the date gives way first */
+  .timebar-label strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .timebar-label > span:first-of-type {
+    flex: none;
+    max-width: 75%;
+  }
+
   .notice {
     top: calc(var(--gap) + env(safe-area-inset-top) + 150px);
   }
@@ -1710,7 +1725,8 @@
   }
 
   .measured-wide,
-  .readout-note.beside-measured {
+  .readout-note.beside-measured,
+  .readout-measured.beside-rider {
     display: none;
   }
 
@@ -1753,7 +1769,7 @@
   .readout-stats,
   .readout-note,
   .readout-hint,
-  .readout-measured small,
+  .measured-wide,
   .route-plan,
   .route-best,
   .share-key,
@@ -1770,9 +1786,22 @@
     display: block;
   }
 
-  .timebar-bars,
+  .timebar-bars {
+    height: 40px;
+  }
+
   .dock:has(.route-panel) .timebar-bars {
-    height: 52px;
+    height: 51px;
+  }
+
+  /* the station is named by its distance and the source, as on a phone */
+  .readout-measured small {
+    display: inline;
+    margin: 0;
+  }
+
+  .measured-narrow {
+    display: inline;
   }
 }
 

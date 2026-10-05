@@ -207,14 +207,15 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
           )}
 
           {/* only where a weather station is near, and only for the present; on a phone it takes the
-              place of the note, with the name of the station left to the wider screens */}
+              place of the note, with the name of the station left to the wider screens, and it gives way
+              to what the wind does to the rider, which has no note to replace */}
           {station && (
-            <p className="readout-measured">
+            <p className={rider ? 'readout-measured beside-rider' : 'readout-measured'}>
               <Gauge size={15} aria-hidden="true" />
               <span>
                 Measured <b>{station.wind}</b> at {measured.clock}
                 {station.verdict && `, ${station.verdict}`}
-                {station.verdict && station.verdict !== 'as forecast' && ` (forecast ${Math.round(measured.forecast)})`}
+                {station.verdict && station.verdict !== 'as forecast' && <span className="measured-wide"> (forecast {Math.round(measured.forecast)})</span>}
                 <small>
                   <span className="measured-narrow"> · </span>
                   <span className="measured-wide">{measured.name}, </span>
