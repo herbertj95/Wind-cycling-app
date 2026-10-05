@@ -375,6 +375,10 @@
   font-weight: 600;
 }
 
+.measured-narrow {
+  display: none;
+}
+
 .readout-measured small {
   display: block;
   margin-top: 1px;
@@ -776,7 +780,12 @@
   text-overflow: ellipsis;
 }
 
-/* turns the route round; says so when the other way is the easier or the harder one */
+/* the distance and the button that turns the route round; on a phone they get a line of their own */
+.route-sub {
+  display: contents;
+}
+
+/* turns the route round; says so when the other way is clearly easier */
 .route-flip {
   display: inline-flex;
   flex: none;
@@ -830,7 +839,7 @@
   color: var(--ink);
 }
 
-/* the best hour to leave on each of the coming days, each a button that picks it */
+/* the best time to leave on each of the coming days, each a button that picks it; one line that does not wrap */
 .route-best {
   display: flex;
   align-items: baseline;
@@ -846,11 +855,22 @@
   color: var(--ink);
 }
 
-.route-best b,
+.route-best > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .route-best .text-button {
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
+}
+
+/* the one the plan is for */
+.route-best .text-button[aria-pressed='true'] {
+  text-decoration: none;
 }
 
 .share-bar {
@@ -1060,6 +1080,11 @@
   white-space: nowrap;
 }
 
+/* the label in full on a wide screen; on a phone the numbers come first, so they are what stays */
+.timebar-narrow {
+  display: none;
+}
+
 /* the fold button sits in the label row without making it taller */
 .timebar-actions .icon-button {
   margin: -8px -6px -8px 0;
@@ -1088,7 +1113,7 @@
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 70px;
+  height: 58px;
   padding: 12px 0 14px;
   border-radius: 4px;
   cursor: pointer;
@@ -1145,15 +1170,14 @@
 
 /* Which way the wind blows, over the bar of that hour; a dot for still air. Wider than a bar on a
    phone, so they are only drawn every few hours. */
-.bar-wind,
-.bar-best {
+.bar-wind {
   position: absolute;
   bottom: 100%;
   left: 50%;
   width: 11px;
   height: 11px;
   margin: 0 0 1px -5.5px;
-  color: var(--ink-2);
+  color: var(--ink-3);
 }
 
 .bar-calm {
@@ -1173,59 +1197,22 @@
 }
 
 .bar.selected .bar-wind {
-  color: var(--ink);
+  color: var(--ink-2);
 }
 
-/* the best hour of a day to set off */
-.bar-best {
-  color: var(--ink);
-}
-
-/* With a route, a bar is the ride that sets off then: red upwards for the wind against the rider,
-   blue downwards for the wind behind, from a line across the middle. */
-.timebar-bars.rides::before {
-  content: '';
+/* the best time to leave on a day, as a short line in the row of dates, just under its bars */
+.bars-best {
   position: absolute;
-  top: calc(12px + (100% - 26px) / 2);
-  right: 0;
-  left: 0;
-  height: 1px;
-  background: var(--hair);
+  bottom: 9px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink-2);
   pointer-events: none;
 }
 
-.bar .against {
-  bottom: 50%;
-  background: var(--head);
-}
-
-.bar .behind {
-  top: 50%;
-  bottom: auto;
-  border-radius: 0 0 2px 2px;
-  background: var(--tail);
-}
-
-/* a ride that meets rain carries it along its top, like the folded strip of the route */
-.timebar-bars.rides .bar .rain {
-  top: 0;
-  bottom: auto;
-}
-
-.bar.past .against,
-.bar.past .behind,
-.bar.late .against,
-.bar.late .behind {
-  opacity: 0.45;
-}
-
-.timebar-bars.rides .bar.selected {
-  border-radius: 2px;
-  background: var(--track);
-}
-
-.timebar-bars.rides .bar.empty:not(.selected)::after {
-  bottom: calc(50% - 1px);
+/* with a route there is a little more room for the bars of its start */
+.dock:has(.route-panel) .timebar-bars {
+  height: 69px;
 }
 
 /* an hour whose wind is not loaded keeps its place as a faint mark */
@@ -1566,8 +1553,13 @@
     max-width: calc(100vw - 2 * var(--gap));
   }
 
-  .timebar-place {
+  .timebar-place,
+  .timebar-wide {
     display: none;
+  }
+
+  .timebar-narrow {
+    display: inline;
   }
 
   .notice {
@@ -1621,16 +1613,29 @@
     font-size: 15px;
   }
 
-  /* the second line is shared by the distance and the button that turns the route round */
-  .route-meta {
+  /* the second line starts with the button that turns the route round, and the distance follows */
+  .route-sub {
+    display: flex;
+    flex-basis: 100%;
     order: 3;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .route-flip {
+    order: -1;
+    font-size: 12px;
+  }
+
+  .route-meta {
     flex: 1 1 0;
     font-size: 12px;
   }
 
-  .route-flip {
-    order: 4;
-    font-size: 12px;
+  /* two days are as many as a phone has room for */
+  .best-time:nth-child(n + 3) {
+    display: none;
   }
 
   .route-actions .segmented,
@@ -1676,17 +1681,41 @@
   }
 
   .dock:has(.route-panel) .timebar-bars {
-    height: 58px;
+    height: 57px;
   }
 
-  /* the name of the station is left to the wider screens */
+  /* The measured wind takes the place of the note, on one line: how far the station is and whose it
+     is stay, its name is left to the wider screens. */
   .readout-measured {
     margin-top: 6px;
-    font-size: 13px;
+    padding-top: 6px;
+    border-top: 1px solid var(--hair);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .readout-measured > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .readout-measured svg {
+    margin-top: 0;
   }
 
   .readout-measured small {
+    display: inline;
+    margin: 0;
+  }
+
+  .measured-wide,
+  .readout-note.beside-measured {
     display: none;
+  }
+
+  .measured-narrow {
+    display: inline;
   }
 }
 
@@ -1741,7 +1770,8 @@
     display: block;
   }
 
-  .timebar-bars {
+  .timebar-bars,
+  .dock:has(.route-panel) .timebar-bars {
     height: 52px;
   }
 }
@@ -1770,8 +1800,8 @@
 
   /* as tall as a finger without making its line taller */
   .route-flip {
-    padding: 14px 0 14px 8px;
-    margin: -14px 0;
+    padding: 14px 8px;
+    margin: -14px -8px;
   }
 
   .route-plan select {
@@ -1779,8 +1809,14 @@
     padding: 0 6px;
   }
 
+  /* the times to leave grow downwards only: the line above them is the plan they change */
+  .route-best > span,
+  .route-best .text-button {
+    padding-bottom: 14px;
+    margin-bottom: -14px;
+  }
+
   .timebar-label .text-button,
-  .route-best .text-button,
   .readout .text-button,
   .notice .text-button,
   .map-status .text-button {

@@ -240,6 +240,26 @@ describe('downloading what is needed', () => {
   });
 });
 
+describe('stamp', () => {
+  it('changes when the points arrive and when they are renewed, and not when others do', async () => {
+    const wind = () => store.getSnapshot();
+    const empty = wind().stamp(LISBON);
+    store.want('focus', LISBON);
+    await settle();
+    const loaded = wind().stamp(LISBON);
+    expect(loaded).not.toBe(empty);
+
+    store.want('view', row(10));
+    await settle();
+    expect(wind().stamp(LISBON)).toBe(loaded);
+
+    await settle(STALE_MS + 2 * MINUTE_MS);
+    store.refresh();
+    await settle();
+    expect(wind().stamp(LISBON)).not.toBe(loaded);
+  });
+});
+
 describe('keeping the forecast fresh', () => {
   it('asks again for a point once it is an hour old, and keeps the old values meanwhile', async () => {
     store.want('focus', LISBON);

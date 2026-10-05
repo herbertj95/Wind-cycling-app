@@ -12,9 +12,11 @@ The map is the whole screen. The wind is drawn on top of it wherever you take th
 * **🌍 Anywhere**: move the map or use **Search** to find a town, and the forecast follows. Tap any point to read its wind.
 * **🧭 Names to find your way**: road numbers and summits with their height from a regional view; zoomed in to street level, street names and landmarks such as monuments, museums, stadiums, viewpoints and stations.
 * **📍 Your places**: places are labelled on the map with their current wind. The app starts with nine riding spots around Lisbon (Guincho, Marginal, Sintra, Arrábida and others); save any searched or tapped point with the bookmark in the readout, and remove the ones you do not need.
-* **🕒 Time bar**: 48 hours of forecast for the place you are looking at, in the local time of that place. Drag it or press play. The map follows without reloading.
+* **🕒 Time bar**: 48 hours of forecast for the place you are looking at, in the local time of that place, with small arrows above the bars for the way the wind turns. Drag it or press play. The map follows without reloading.
 * **📊 Route analysis**: open your own GPX file from anywhere, or one of the bundled routes around Lisbon. The route is coloured by what the wind does to you: blue pushes, red slows, grey barely matters. Each point is checked at the time you would get there, for the riding speed you choose. Ferry crossings and other gaps in a recording are not counted as ridden.
 * **🌧️ Rain**: the hours with rain stand on a teal foot on the time bar, taller the harder it rains. On a wet hour the readout says how hard, how much and how likely ("Light rain, 0.4 mm/h (60% chance)"), and a route says how many kilometres you would ride in the rain leaving when you say, with the profile hatched over those stretches. The map itself stays about the wind.
+* **⏰ When to leave**: with a route open, the app works out the ride for every hour it could start at and names the best time today and tomorrow ("Best: today 07:00 to 10:00, tomorrow 08:00"), only ever in daylight. It says whether the headwind comes on the way out or the way home, and when the route is clearly easier ridden the other way round, *Reverse* says so.
+* **📏 Measured wind**: in Portugal, the readout shows what the nearest IPMA weather station measured in the last hours next to the forecast ("Measured 18 km/h NW at 09:00, as forecast").
 * **🚴 Ride it**: move along the elevation profile, or press *Ride it*, and the rider on the map shows your heading and where the wind hits you.
 * **↕️ More map when you want it**: the wind readout, the time bar and the route details each fold away with the small arrow on them, and stay that way until you open them again. Folded, the readout is one line (speed, direction, gusts) and the route keeps its wind as a low red and blue band that you can still drag along.
 * **☀️ Day and night map**: a light map for reading in the sun and a dark one for the evening. *Motion* switches the moving wind on and off; the arrows and numbers stay.
@@ -29,6 +31,7 @@ The map is the whole screen. The wind is drawn on top of it wherever you take th
 * **Relief**: Mapzen Terrarium elevation tiles (AWS Open Data)
 * **Weather**: [Open-Meteo](https://open-meteo.com) hourly forecast: 10 m wind, temperature, and precipitation with its probability. "Now" is the current minute, blended between the two forecast hours around it; gusts and rain are those of the hour in progress.
 * **Place search**: the Open-Meteo geocoding API (names from [GeoNames](https://www.geonames.org/))
+* **Measured wind**: the open data of [IPMA](https://api.ipma.pt/), the weather service of Portugal: the surface observations of its stations, one file for the whole country, hour by hour. The app asks for it at most every 20 minutes, only while the place in the readout is in Portugal (mainland, Madeira or the Azores), and keeps the last copy on the device. Nothing about you or your position is sent. IPMA asks those who use its API to tell it how, at webmaster@ipma.pt.
 * **Android**: Capacitor
 * **Styling**: plain CSS (`src/index.css` for tokens, `src/App.css` for layout)
 
@@ -51,7 +54,9 @@ Open-Meteo is free for non-commercial use, without an API key, up to 600 calls a
 | `src/utils/wind.js` | Compass words, Beaufort names, head/tail/cross components |
 | `src/utils/rain.js` | When an hour counts as wet and how the rain is put in words |
 | `src/utils/gpxParser.js` | GPX parsing, distance, heading and climbing |
-| `src/utils/routeAnalysis.js` | Wind and rain along a route, and the ride advisory |
+| `src/utils/routeAnalysis.js` | Wind and rain along a route, the ride advisory, and the best time to leave |
+| `src/utils/sun.js` | Where the sun is: daylight for a ride, without asking any service |
+| `src/utils/ipma.js` | The wind measured by IPMA's stations, and the station nearest a place |
 | `src/utils/mapStyle.js` | Basemap colours and the route colour scale |
 | `src/map/` | The map itself: basemap, moving wind layer, arrows, route and markers |
 | `src/components/` | Panels: wind readout, time bar, route panel, the search and routes menus |
@@ -128,6 +133,7 @@ The app icon is the W of Wind drawn as a route in the app's three wind colours. 
 4. **Pick a time**: drag the bar at the bottom. *Back to now* returns to the current hour. Times are local to the place; when that is not your own time zone, the offset is shown next to them.
 5. **Load a route**: open **Routes** and open your own `.gpx` file, or choose one of the routes around Lisbon. You can also drop a file on the map.
 6. **Ride it**: move along the profile to see head, tail and crosswind at each kilometre. Set your average speed to match your ride.
+7. **Choose when to go**: tap one of the best times in the route panel to plan the ride for then, or pick any hour on the bar. *Reverse* turns the route round.
 
 ### Reading the wind along a route
 
@@ -136,6 +142,18 @@ The coloured bar and the percentages split the route by what you feel along the 
 Under the elevation profile, the band shows that head or tail component kilometre by kilometre: red above the line is wind against you, blue below it is wind behind you, and the height is its strength. A thin line marks the highest red point and another the lowest blue one, each with its value: "headwind up to 12 km/h" over the upper line, "tailwind up to 8 km/h" under the lower one. Red and blue are drawn to one scale, so twice the height is twice the wind; the full height of the band stands for 15 km/h, or for the strongest value on the route rounded up to the next 5 when that is more, so on a calm day the band stays thin. There is no grey in it: the grey stretches of the bar are where the band stays within 5 km/h of the line.
 
 With the route details folded away, the band is shown on its own, with the strongest headwind and tailwind beside it.
+
+### The best time to leave
+
+With a route open, the time bar shows the wind at its start, and the app rides the route at every hour of the bar (at your average speed, each point at the time you would get there) to give each start a score. The score adds up what the wind costs you, kilometre by kilometre: a headwind costs more than the same tailwind gives back, and a crosswind costs a little too. Rain adds to it by how hard it falls and how likely it is, and gusts from 25 km/h across the road, or 40 km/h from any side, add more the stronger they are.
+
+The best time on a day is the easiest start, together with the hours next to it that come close; a short line under the bars marks it. Only rides that finish before dark (the end of civil twilight, half an hour or so after sunset) are offered, and only where the forecast covers the whole route. When there is no time left today, the panel says so. Today and tomorrow are always looked at; the day after only once the bar holds the whole of its daylight.
+
+The route panel also says which part of the ride has the wind against you, when there is a clear difference: "Headwind out, tailwind home." on a route that comes back to its start, split at its farthest point; "Headwind, then tailwind." on one that goes from one place to another. *Reverse* rides it the other way round, and says *easier that way* when the wind makes it clearly so at the hour shown. A route that comes back by the road it went out on has no *Reverse*: it would be the same ride.
+
+### Measured wind
+
+Where an IPMA station is within 30 km of the place in the readout, and the readout shows the present, the panel adds what that station measured in the last two hours and how it compares with the forecast for the same spot and hour: within 5 km/h is *as forecast*. Stations report every hour, with the wind as one of eight directions. It is shown for a place, a tapped point, your position, or the start of a route, never for a later time or a later point of the ride.
 
 ### Rain
 

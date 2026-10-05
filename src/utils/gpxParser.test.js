@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { calculateDistance, calculateBearing, parseGpxData, reverseRoute, PRESET_ROUTES } from './gpxParser';
+import { calculateDistance, calculateBearing, parseGpxData, reverseRoute, positionAt, PRESET_ROUTES } from './gpxParser';
 
 // One degree of latitude on the 6371 km sphere the parser uses: 6371 * pi / 180
 const KM_PER_DEGREE = 111.19492664455873;
@@ -869,5 +869,27 @@ describe('PRESET_ROUTES', () => {
       expect(preset.name).toBeTruthy();
       expect(preset.filename).toMatch(/\.gpx$/);
     }
+  });
+});
+
+describe('positionAt', () => {
+  const points = [
+    { lat: 38, lng: -9, distance: 0 },
+    { lat: 38.1, lng: -9, distance: 10 },
+    { lat: 38.1, lng: -8.8, distance: 30 },
+  ];
+
+  it('gives the point itself at its own distance', () => {
+    expect(positionAt(points, 10)).toMatchObject({ lat: 38.1, lng: -9 });
+  });
+
+  it('goes in a straight line between the two points around a distance', () => {
+    expect(positionAt(points, 5)).toEqual({ lat: expect.closeTo(38.05, 9), lng: expect.closeTo(-9, 9) });
+    expect(positionAt(points, 20)).toEqual({ lat: expect.closeTo(38.1, 9), lng: expect.closeTo(-8.9, 9) });
+  });
+
+  it('stays at the ends before the start and past the finish', () => {
+    expect(positionAt(points, -3)).toMatchObject({ lat: 38, lng: -9 });
+    expect(positionAt(points, 99)).toMatchObject({ lat: 38.1, lng: -8.8 });
   });
 });

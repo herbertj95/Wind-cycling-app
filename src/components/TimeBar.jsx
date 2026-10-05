@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CaretDown, CaretUp, Pause, Play, Star } from '@phosphor-icons/react';
+import { CaretDown, CaretUp, Pause, Play } from '@phosphor-icons/react';
 import { clockHour, formatDay, formatDayClock, zoneLabel } from '../utils/time';
 import { LIKELY_PERCENT, formatRain, isWet, rainLevel } from '../utils/rain';
 import { CALM_KMH, compassPoint } from '../utils/wind';
@@ -11,53 +11,32 @@ const BARS_ID = 'timebar-hours';
 // Arrows for the wind direction are drawn every so many hours, the fewest that keeps them this far apart
 const ARROW_GAP_PX = 14;
 const ARROW_EVERY = [1, 2, 3, 4, 6, 12];
-// The columns of a ride are drawn against a round number of km/h, and at least this many
-const RIDE_STEP_KMH = 5;
 
 function relativeLabel(hoursFromNow) {
   if (hoursFromNow === 0) return 'now';
   return hoursFromNow > 0 ? `in ${hoursFromNow} h` : `${-hoursFromNow} h ago`;
 }
 
-// what a ride leaving at some hour meets, in words: [short, for the label; long, for screen readers]
-function describeRide(ride) {
-  if (!ride?.known) return null;
-  const against = Math.round(ride.against);
-  const behind = Math.round(ride.behind);
-  const rain = ride.wet ? `, rain up to ${formatRain(ride.rain)} mm/h` : '';
-  if (against === 0 && behind === 0) return [`hardly any wind along the road${rain}`, `hardly any wind along the road${rain}`];
-  return [
-    `${against} km/h against, ${behind} behind${rain}`,
-    `on average ${against} km/h against you and ${behind} behind you along the route${rain}`,
-  ];
-}
-
 /**
  * Two days of forecast, one bar per hour. Tap or drag to choose the hour shown on the map.
- * For a place, a bar is the wind speed there, with gusts as the paler cap. An hour with rain stands on
- * a teal foot, taller the harder it rains and paler when the rain is only possible.
- * For a route (`rides`), a bar is the whole ride setting off at that hour: red upwards for the wind
- * against the rider and blue downwards for the wind behind, averaged over the ride, like the wind
- * under the profile of the route. A ride that meets rain carries a teal line along its top.
- * Above the bars, arrows show which way the wind blows as the hours go by, and a star marks the best
- * hour to leave on each day.
+ * A bar is the wind speed at one place, with gusts as the paler cap. An hour with rain stands on a teal
+ * foot, taller the harder it rains and paler when the rain is only possible. Above the bars, arrows show
+ * which way the wind blows as the hours go by. With a route, the place is its start, and a short line
+ * under the bars marks the best time to leave on each day.
  * - hours: [{ time, speed, gust, from, rain, rainChance }], one per hour; speed, gust and from are null
  *   while that hour is not loaded, and rain (mm in that hour) and its chance (percent) are not numbers
  *   where the forecast does not give them
- * - rides: null, or one entry per hour as App makes them from scanDepartures: { known, late, against,
- *   behind, wet, rain, rainChance }
- * - bestTimes: [{ time }] of the best hours to leave (see bestDepartures); only drawn with `rides`
+ * - bestTimes: [{ from, to }] of the best times to leave, unix seconds of the first and the last hour
  * - selected / nowTime: unix seconds of the chosen bar and of the bar for the hour in progress
  * - shownTime: unix seconds of the moment on the map (the current minute while following the clock)
  * - nowReading: { speed, gust, from, rain, rainChance } at that place for the current minute, used while following the clock
  * - place: where the bars are measured, e.g. "Lisboa"
  * - zone: time zone of that place; times are shown in its local time
- * - rideStart: the chosen hour is when a ride sets off
+ * - rideStart: the bars are the start of a route, and the chosen hour is when the ride sets off
  * - collapsed: the bars are folded away and one line says which moment the map shows, to leave the map free
  */
 export default function TimeBar({
   hours,
-  rides,
   bestTimes,
   selected,
   nowTime,
@@ -93,18 +72,14 @@ export default function TimeBar({
   const current = hours[at];
   const scaleMax = Math.max(20, ...hours.map((h) => h.gust ?? 0));
   const isNow = selected === nowTime;
-
-  // the strongest average of the two days, rounded up, is the full height of a column, upwards and downwards
-  const rideScale = rides
-    ? Math.max(RIDE_STEP_KMH, Math.ceil(Math.max(0, ...rides.map((r) => (r.known ? Math.max(r.against, r.behind) : 0))) / RIDE_STEP_KMH) * RIDE_STEP_KMH)
-    : 0;
-  const best = rides ? new Set(bestTimes.map((b) => b.time)) : null;
+  // where the best times to leave are on the bar, as indexes of the hours
+  const bestSpans = bestTimes
+    .map((b) => [hours.findIndex((h) => h.time === b.from), hours.findIndex((h) => h.time === b.to)])
+    .filter(([from, to]) => from >= 0 && to >= 0);
 
   // arrows on the hours of the clock that are a multiple of `every`, so they stay put as time passes
   const slot = barsWidth / hours.length;
   const every = slot > 0 ? ARROW_EVERY.find((n) => n * slot >= ARROW_GAP_PX) ?? 24 : 0;
-  // an arrow gives way to a star that would touch it
-  const crowded = (i) => best !== null && hours.some((h, j) => best.has(h.time) && j !== i && Math.abs(j - i) * slot < ARROW_GAP_PX);
 
   const pick = (clientX) => {
     const rect = barsRef.current.getBoundingClientRect();
@@ -127,15 +102,20 @@ export default function TimeBar({
   const hoursFromNow = Math.round((selected - nowTime) / HOUR);
   const when = relativeLabel(hoursFromNow);
   const quoted = isNow && nowReading ? nowReading : current;
+  const hasWind = quoted.speed !== null;
+  const blowing = hasWind && Number.isFinite(quoted.from) && quoted.speed >= CALM_KMH;
+  const point = blowing ? compassPoint(quoted.from) : null;
   const chance = Number.isFinite(quoted.rainChance) ? ` (${Math.round(quoted.rainChance)}%)` : '';
-  const rain = isWet(quoted.rain) ? `, rain ${formatRain(quoted.rain)} mm${chance}` : '';
-  const from = Number.isFinite(quoted.from) && quoted.speed >= CALM_KMH ? ` ${compassPoint(quoted.from)}` : '';
-  const wind = quoted.speed === null ? null : `${Math.round(quoted.speed)} km/h${from}, gusts ${Math.round(quoted.gust)}${rain}`;
-  // with a route, the label is about the ride that leaves then, like the bars
-  const ride = rides ? describeRide(rides[at]) : null;
-  const isBest = best !== null && best.has(selected);
-  const said = rides ? ride?.[0] ?? null : wind;
-  const spoken = rides ? ride && `${ride[1]}${isBest ? ', the best time to leave that day' : ''}` : wind;
+  const wet = isWet(quoted.rain);
+  // The wind of that hour three ways: in full, short with the numbers first for a phone, and in words
+  // for screen readers
+  const wind = hasWind ? `${Math.round(quoted.speed)} km/h${point ? ` ${point}` : ''}, gusts ${Math.round(quoted.gust)}${wet ? `, rain ${formatRain(quoted.rain)} mm${chance}` : ''}` : null;
+  const brief = hasWind ? `${Math.round(quoted.speed)}${point ? ` ${point}` : ' calm'}, gusts ${Math.round(quoted.gust)}${wet ? `, rain ${formatRain(quoted.rain)}` : ''}` : null;
+  const spoken = hasWind
+    ? `${Math.round(quoted.speed)} km/h ${point ? `from the ${point}` : 'calm'}, gusts ${Math.round(quoted.gust)}${wet ? `, rain ${formatRain(quoted.rain)} mm${chance}` : ''}`
+    : null;
+  const inBest = bestTimes.some((b) => selected >= b.from && selected <= b.to);
+  const where = rideStart ? 'at the start of the ride' : place ? `at ${place}` : '';
 
   return (
     <section className={collapsed ? 'timebar panel collapsed' : 'timebar panel'}>
@@ -150,15 +130,22 @@ export default function TimeBar({
 
       <div className="timebar-label">
         <strong>{label}</strong>
-        <span>
-          {when}
-          {rideStart && <span className="timebar-place">, start of the ride</span>}
-          {said && `: ${said}`}
-          {place && !rides && <span className="timebar-place"> at {place}</span>}
+        <span aria-hidden="true">
+          <span className="timebar-wide">
+            {when}
+            {rideStart && <span className="timebar-place">, start of the ride</span>}
+            {wind && `: ${wind}`}
+            {place && !rideStart && <span className="timebar-place"> at {place}</span>}
+          </span>
+          <span className="timebar-narrow">{brief ? `${brief}, ${when}` : when}</span>
         </span>
+        <span className="visually-hidden">{`${when}${spoken ? `: ${spoken}` : ''} ${where}`}</span>
         <div className="timebar-actions">
           {!isNow && (
-            <button type="button" className="text-button" onClick={() => onSelect(nowTime)}>Back to now</button>
+            <button type="button" className="text-button" onClick={() => onSelect(nowTime)} aria-label="Back to now">
+              <span className="timebar-wide">Back to now</span>
+              <span className="timebar-narrow">Now</span>
+            </button>
           )}
           <button
             type="button"
@@ -178,14 +165,14 @@ export default function TimeBar({
         <div
           id={BARS_ID}
           ref={barsRef}
-          className={rides ? 'timebar-bars rides' : 'timebar-bars'}
+          className="timebar-bars"
           role="slider"
           tabIndex={0}
-          aria-label={rides ? 'Hour the ride starts' : 'Forecast hour'}
+          aria-label={rideStart ? 'Hour the ride starts' : 'Forecast hour'}
           aria-valuemin={Math.round((first - nowTime) / HOUR)}
           aria-valuemax={Math.round((last - nowTime) / HOUR)}
           aria-valuenow={hoursFromNow}
-          aria-valuetext={`${label}, ${when}${spoken ? `: ${spoken}` : ''}${place && !rides ? ` at ${place}` : ''}`}
+          aria-valuetext={`${label}, ${when}${spoken ? `: ${spoken}` : ''}${where ? ` ${where}` : ''}${inBest ? ', a good time to leave' : ''}`}
           onPointerDown={(e) => {
             dragging.current = true;
             e.currentTarget.setPointerCapture(e.pointerId);
@@ -202,30 +189,20 @@ export default function TimeBar({
         >
           {hours.map((h, i) => {
             const startsDay = i > 0 && days[i] !== days[i - 1];
-            const ridden = rides ? rides[i] : null;
-            const empty = rides ? !ridden.known : h.speed === null;
-            const classes = ['bar', h.time === selected && 'selected', h.time < nowTime && 'past', startsDay && 'day', empty && 'empty', ridden?.late && 'late']
+            const empty = h.speed === null;
+            const classes = ['bar', h.time === selected && 'selected', h.time < nowTime && 'past', startsDay && 'day', empty && 'empty']
               .filter(Boolean)
               .join(' ');
-            const starred = best !== null && best.has(h.time);
-            const arrow = !starred && every > 0 && clockHours[i] % every === 0 && h.speed !== null && !crowded(i);
+            const arrow = every > 0 && clockHours[i] % every === 0 && !empty;
             return (
               <div key={h.time} className={classes} data-day={startsDay ? days[i] : undefined}>
-                {starred && <Star className="bar-best" size={11} weight="fill" aria-hidden="true" />}
                 {arrow && (h.speed >= CALM_KMH ? (
                   // drawn pointing down and turned by where the wind comes from: it points the way the wind blows
                   <svg className="bar-wind" viewBox="0 0 12 12" aria-hidden="true" style={{ transform: `rotate(${Math.round(h.from)}deg)` }}>
-                    <path d="M6 1v9.5M6 10.5L2.5 6.5M6 10.5l3.5-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M6 1v9.5M6 10.5L2.5 6.5M6 10.5l3.5-4" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 ) : <b className="bar-calm" />)}
-                {ridden && ridden.known && (
-                  <>
-                    <i className="against" style={{ height: `${(ridden.against / rideScale) * 50}%` }} />
-                    <i className="behind" style={{ height: `${(ridden.behind / rideScale) * 50}%` }} />
-                    {ridden.wet && <i className={`rain ${rainLevel(ridden.rain)}${ridden.rainChance > 0 && ridden.rainChance < LIKELY_PERCENT ? ' unlikely' : ''}`} />}
-                  </>
-                )}
-                {!ridden && h.speed !== null && (
+                {!empty && (
                   <>
                     <i className="gust" style={{ height: `${(h.gust / scaleMax) * 100}%` }} />
                     <i className="speed" style={{ height: `${Math.max(3, (h.speed / scaleMax) * 100)}%` }} />
@@ -235,6 +212,14 @@ export default function TimeBar({
               </div>
             );
           })}
+          {/* the best times to leave, as a short line under their bars */}
+          {bestSpans.map(([from, to]) => (
+            <span
+              key={from}
+              className="bars-best"
+              style={{ left: `${(from / hours.length) * 100}%`, width: `${((to - from + 1) / hours.length) * 100}%` }}
+            />
+          ))}
         </div>
       )}
     </section>

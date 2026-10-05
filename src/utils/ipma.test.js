@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { STATION_RANGE_KM, compareWithForecast, fetchObservations, inIpmaArea, nearestStation, parseObservations } from './ipma';
+import { STATION_RANGE_KM, compareWithForecast, fetchObservations, inIpmaArea, loadObservations, nearestStation, parseObservations, saveObservations } from './ipma';
 
 // One reading as IPMA's obs-surface.geojson lists them
 const reading = (id, name, lat, lng, time, speed, sector, extra = {}) => ({
@@ -195,5 +195,40 @@ describe('fetchObservations', () => {
     await expect(fetchObservations()).rejects.toThrow('IPMA answered 503');
     vi.stubGlobal('fetch', answer({ message: 'maintenance' }));
     await expect(fetchObservations()).rejects.toThrow('Unexpected observations response');
+  });
+});
+
+describe('saveObservations and loadObservations', () => {
+  const memory = () => {
+    const data = {};
+    return { data, getItem: (k) => data[k] ?? null, setItem: (k, v) => { data[k] = String(v); } };
+  };
+  const station = { id: 1, name: 'Lisboa, Geofísico', lat: 38.72, lng: -9.15, time: 1790985600, speed: 12, from: 315 };
+
+  it('keeps the last download, and when it was made', () => {
+    const storage = memory();
+    saveObservations([station], 1790985600000, storage);
+    expect(loadObservations(storage)).toEqual({ stations: [station], at: 1790985600000 });
+  });
+
+  it('has nothing when nothing is kept, or what is kept is not usable', () => {
+    const storage = memory();
+    expect(loadObservations(storage)).toBeNull();
+    storage.setItem('wind-ipma-v1', 'not json');
+    expect(loadObservations(storage)).toBeNull();
+    storage.setItem('wind-ipma-v1', JSON.stringify({ at: 'yesterday', stations: [] }));
+    expect(loadObservations(storage)).toBeNull();
+  });
+
+  it('drops a kept station that is not whole', () => {
+    const storage = memory();
+    saveObservations([station, { ...station, speed: null }, { ...station, from: 'NW' }], 5, storage);
+    expect(loadObservations(storage).stations).toEqual([station]);
+  });
+
+  it('goes without when the storage refuses', () => {
+    const broken = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('full'); } };
+    expect(() => saveObservations([station], 5, broken)).not.toThrow();
+    expect(loadObservations(broken)).toBeNull();
   });
 });

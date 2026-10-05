@@ -439,6 +439,14 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     },
 
     /**
+     * A short text that changes whenever one of a set of lattice points arrives, is renewed or goes:
+     * what is worked out from those points alone needs working out again only when it changes.
+     */
+    stamp(nodes) {
+      return nodes.map((node) => points.get(nodeKey(node.level, node.row, node.col))?.fetchedAt ?? '-').join(',');
+    },
+
+    /**
      * How far a set of lattice points is: 'ready' when all are here, 'failed' when one could not be
      * downloaded and is not being tried right now, otherwise 'loading'.
      */
@@ -494,7 +502,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
       return () => listeners.delete(listener);
     },
 
-    /** The wind as it is now: { sample, frame, zoneAt, state, problem, version }. */
+    /** The wind as it is now: { sample, frame, zoneAt, stamp, state, problem, version }. */
     getSnapshot: () => snapshot,
 
     destroy() {

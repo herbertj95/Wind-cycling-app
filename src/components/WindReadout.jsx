@@ -56,7 +56,7 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
   const station = hasReading && measured ? {
     wind: `${Math.round(measured.speed)} km/h${measured.from !== null && measured.speed >= CALM_KMH ? ` ${compassPoint(measured.from)}` : ''}`,
     verdict: compareWithForecast(measured.speed, measured.forecast),
-    where: `${measured.name}, ${measured.km < 1 ? 'under 1' : Math.round(measured.km)} km away`,
+    km: `${measured.km < 1 ? 'under 1' : Math.round(measured.km)} km`,
   } : null;
 
   // the panel hangs from the top of the screen: it folds upwards and opens downwards
@@ -77,7 +77,7 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
   const spokenReading = (
     <p className="visually-hidden" aria-live="polite" aria-atomic="true">
       {hasReading && !quiet
-        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}${rain ? ` ${rain}.` : ''}${station ? ` Measured ${station.wind} at ${measured.clock}${station.verdict ? `, ${station.verdict}` : ''}, at ${station.where}.` : ''}`
+        ? `${title}${when ? `, ${when}` : ''}: ${speed} kilometres per hour ${spoken}, gusts ${Math.round(reading.gust)}.${rider ? ` ${describeRiderWind(rider.head, rider.cross)}.` : ''}${rain ? ` ${rain}.` : ''}`
         : ''}
     </p>
   );
@@ -206,15 +206,23 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
             </p>
           )}
 
-          {/* only where a weather station is near, and only for the present */}
+          {/* only where a weather station is near, and only for the present; on a phone it takes the
+              place of the note, with the name of the station left to the wider screens */}
           {station && (
             <p className="readout-measured">
               <Gauge size={15} aria-hidden="true" />
               <span>
                 Measured <b>{station.wind}</b> at {measured.clock}
                 {station.verdict && `, ${station.verdict}`}
-                {station.verdict && station.verdict !== 'as forecast' && ` (${Math.round(measured.forecast)})`}
-                <small>{station.where}. Source: IPMA</small>
+                {station.verdict && station.verdict !== 'as forecast' && ` (forecast ${Math.round(measured.forecast)})`}
+                <small>
+                  <span className="measured-narrow"> · </span>
+                  <span className="measured-wide">{measured.name}, </span>
+                  {station.km}
+                  <span className="measured-wide"> away. Source: </span>
+                  <span className="measured-narrow">, </span>
+                  IPMA
+                </small>
               </span>
             </p>
           )}
@@ -240,7 +248,7 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
               {describeRiderWind(rider.head, rider.cross)}
             </p>
           )}
-          {note && !rider && <p className="readout-note">{note}</p>}
+          {note && !rider && <p className={station ? 'readout-note beside-measured' : 'readout-note'}>{note}</p>}
           <p className="readout-hint">
             Arrows point the way the wind blows, numbers are km/h. Tap the map to read any point.
             {updatedAt && !stale && ` Forecast updated ${updatedAt}.`}

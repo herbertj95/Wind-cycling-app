@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sunAltitude, isDaylight, rideLight } from './sun';
+import { sunAltitude, isDaylight, isRidingLight, darkChecks } from './sun';
 
 const utc = (text) => Date.parse(`${text}Z`) / 1000;
 const LISBON = [38.72, -9.14];
@@ -77,33 +77,46 @@ describe('isDaylight', () => {
   });
 });
 
-describe('rideLight', () => {
-  const lisbon = { lat: 38.72, lng: -9.14 };
-  const cascais = { lat: 38.7, lng: -9.42 };
-  const HOUR = 3600;
+describe('isRidingLight', () => {
+  it('lasts through civil twilight, half an hour or so either side of the sun on the horizon', () => {
+    // an October day in Lisbon: the sun is up from about 06:36 to 18:14 UTC, and the sky light from about
+    // 06:10 to 18:40
+    expect(isRidingLight(utc('2026-10-05T06:00'), ...LISBON)).toBe(false);
+    expect(isRidingLight(utc('2026-10-05T06:20'), ...LISBON)).toBe(true);
+    expect(isRidingLight(utc('2026-10-05T18:30'), ...LISBON)).toBe(true);
+    expect(isRidingLight(utc('2026-10-05T18:50'), ...LISBON)).toBe(false);
+  });
+});
 
-  // an October day in Lisbon: the sun is up from about 06:36 to 18:14 UTC
-  it('is a ride in daylight when it starts after sunrise and is over before sunset', () => {
-    expect(rideLight(utc('2026-10-05T08:00'), utc('2026-10-05T11:00'), lisbon, cascais)).toBe('ride');
-    expect(rideLight(utc('2026-10-05T07:00'), utc('2026-10-05T18:00'), lisbon, lisbon)).toBe('ride');
+describe('darkChecks', () => {
+  // Lisbon to Cascais, about 24.5 km: an hour at 25 km/h
+  const route = {
+    totalDistance: 24.5,
+    points: [{ lat: 38.72, lng: -9.14, distance: 0 }, { lat: 38.7, lng: -9.42, distance: 24.5 }],
+  };
+  // 100 km there and back, past the end of the light
+  const long = { totalDistance: 100, points: [{ lat: 38.72, lng: -9.14, distance: 0 }, { lat: 38.72, lng: -9.14, distance: 100 }] };
+
+  it('finds no dark on a ride in the light from start to finish', () => {
+    expect(darkChecks(route, utc('2026-10-05T08:00'), 25)).toBe(0);
+    expect(darkChecks(route, utc('2026-10-05T17:30'), 25)).toBe(0);
   });
 
-  it('only starts in daylight when the night catches up with it', () => {
-    expect(rideLight(utc('2026-10-05T16:00'), utc('2026-10-05T19:00'), lisbon, cascais)).toBe('start');
+  it('notices a ride that sets off in the dark, or that the dark catches up with', () => {
+    expect(darkChecks(route, utc('2026-10-05T05:00'), 25)).toBe(2);
+    expect(darkChecks(route, utc('2026-10-05T06:00'), 25)).toBe(1);
+    expect(darkChecks(route, utc('2026-10-05T18:00'), 25)).toBe(1);
   });
 
-  it('is no ride for daylight when it sets off in the dark, however it ends', () => {
-    expect(rideLight(utc('2026-10-05T05:00'), utc('2026-10-05T09:00'), lisbon, cascais)).toBe('none');
-    expect(rideLight(utc('2026-10-05T20:00'), utc('2026-10-05T22:00'), lisbon, cascais)).toBe('none');
+  it('looks at every full hour of a long ride, and counts how much of it is in the dark', () => {
+    // 5 hours at 20 km/h from 16:00 UTC: at 16, 17, 18, 19, 20 and 21; the last three are dark
+    expect(darkChecks(long, utc('2026-10-05T16:00'), 20)).toBe(3);
+    expect(darkChecks(long, utc('2026-10-05T08:00'), 20)).toBe(0);
   });
 
-  it('notices a night between a start in daylight and a finish in daylight', () => {
-    const start = utc('2026-10-05T16:00');
-    expect(rideLight(start, start + 18 * HOUR, lisbon, lisbon)).toBe('start');
-  });
-
-  it('goes by the place the ride finishes at for its end', () => {
+  it('looks where the rider is at each of those moments', () => {
     // setting off in Lisbon at noon and finishing an hour later on the far side of the world, where it is night
-    expect(rideLight(utc('2026-10-05T12:00'), utc('2026-10-05T13:00'), lisbon, { lat: -38.72, lng: 170.86 })).toBe('start');
+    const far = { totalDistance: 20, points: [{ lat: 38.72, lng: -9.14, distance: 0 }, { lat: -38.72, lng: 170.86, distance: 20 }] };
+    expect(darkChecks(far, utc('2026-10-05T12:00'), 20)).toBe(1);
   });
 });

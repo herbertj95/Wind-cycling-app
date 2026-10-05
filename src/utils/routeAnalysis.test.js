@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyseRoute, bandScale, bestDepartures, routeTurn, scanDepartures, windCost, windPeaks, RIDE_SPEEDS } from './routeAnalysis';
+import { analyseRoute, bandScale, bestWindows, retracesItself, routeTurn, scanDepartures, windCost, windPeaks, RIDE_SPEEDS } from './routeAnalysis';
 import { nodeKey } from './lattice';
 import { pointAt, blendAt } from './windField';
 import { angleDiff, windComponents } from './wind';
@@ -850,6 +850,22 @@ describe('windCost', () => {
     expect(windCost(15, 20)).toBeCloseTo(20.625, 9);
     expect(windCost(15, 20)).toBeGreaterThan(windCost(15, 30));
   });
+
+  it('charges for a wind across the road too, by the air it adds to what the rider meets', () => {
+    // (hypot(25, 20) * 25 - 25^2) / 50 = (32.0156 * 25 - 625) / 50
+    expect(windCost(0, 25, 20)).toBeCloseTo(3.5078, 3);
+    // either side is the same
+    expect(windCost(0, 25, -20)).toBeCloseTo(windCost(0, 25, 20), 9);
+    // and on top of a headwind: (hypot(40, 10) * 40 - 625) / 50
+    expect(windCost(15, 25, 10)).toBeCloseTo((Math.hypot(40, 10) * 40 - 625) / 50, 9);
+    expect(windCost(15, 25, 10)).toBeGreaterThan(windCost(15, 25));
+  });
+
+  it('is what it was without a wind across the road', () => {
+    [-30, -10, 0, 10, 30].forEach((head) => {
+      expect(windCost(head, 25, 0)).toBeCloseTo(((25 + head) * Math.abs(25 + head) - 625) / 50, 9);
+    });
+  });
 });
 
 describe('routeTurn', () => {
@@ -857,9 +873,7 @@ describe('routeTurn', () => {
 
   it('turns an out-and-back at its far end', () => {
     const route = makeRoute(start, [{ bearing: 0, km: 15, steps: 15 }, { bearing: 180, km: 15, steps: 15 }]);
-    const turn = routeTurn(route);
-    expect(turn.loop).toBe(true);
-    expect(turn.km).toBeCloseTo(15, 9);
+    expect(routeTurn(route)).toEqual({ returns: true, km: expect.closeTo(15, 9) });
   });
 
   it('turns a loop at the point farthest from the start, not at half the distance', () => {
@@ -870,7 +884,7 @@ describe('routeTurn', () => {
       { bearing: 180, km: 4, steps: 4 },
       { bearing: 270, km: 12, steps: 12 },
     ]);
-    expect(routeTurn(route)).toEqual({ loop: true, km: expect.closeTo(16, 6) });
+    expect(routeTurn(route)).toEqual({ returns: true, km: expect.closeTo(16, 6) });
     // ridden from the corner next to it, the farthest point comes after 12 km of the 32
     const shifted = makeRoute(start, [
       { bearing: 90, km: 12, steps: 12 },
@@ -882,31 +896,69 @@ describe('routeTurn', () => {
   });
 
   it('splits a route from one place to another at half its distance', () => {
-    const turn = routeTurn(northbound());
-    expect(turn.loop).toBe(false);
-    expect(turn.km).toBeCloseTo(25, 9);
+    expect(routeTurn(northbound())).toEqual({ returns: false, km: expect.closeTo(25, 9) });
   });
 
-  it('splits a loop at half its distance when its farthest point is near one end', () => {
-    // 5 km out and back, then two short laps of 4 km out and back: the farthest point is 5 km into 26
-    const route = makeRoute(start, [
+  it('has no turn for a route that comes back with its farthest point near one end', () => {
+    // 5 km out and back, then 8 km east: it finishes 8 km from the start, the farthest point is 8 km
+    // away at the very end
+    const late = makeRoute(start, [{ bearing: 0, km: 2, steps: 2 }, { bearing: 180, km: 2, steps: 2 }, { bearing: 90, km: 10, steps: 10 }, { bearing: 270, km: 1, steps: 1 }]);
+    expect(routeTurn(late).returns).toBe(false);
+    // 9 km north and nearly home again, then 7 km east and back: the farthest point is 9 km into 31,
+    // under 30% of the way
+    const early = makeRoute(start, [{ bearing: 0, km: 9, steps: 9 }, { bearing: 180, km: 8, steps: 8 }, { bearing: 90, km: 7, steps: 7 }, { bearing: 270, km: 7, steps: 7 }]);
+    expect(routeTurn(early)).toEqual({ returns: true, km: null });
+  });
+
+  it('has no turn for a route ridden in laps, which passes by its start on the way', () => {
+    // 5 km out and back, twice: back at the start half way
+    const laps = makeRoute(start, [
       { bearing: 0, km: 5, steps: 5 },
       { bearing: 180, km: 5, steps: 5 },
-      { bearing: 90, km: 4, steps: 4 },
-      { bearing: 270, km: 4, steps: 4 },
-      { bearing: 90, km: 4, steps: 4 },
-      { bearing: 270, km: 4, steps: 4 },
+      { bearing: 0, km: 5, steps: 5 },
+      { bearing: 180, km: 5, steps: 5 },
     ]);
-    expect(routeTurn(route)).toEqual({ loop: true, km: expect.closeTo(13, 9) });
+    expect(routeTurn(laps)).toEqual({ returns: true, km: null });
   });
 
-  it('takes a long route that finishes a few kilometres from its start for a loop, and a short one not', () => {
-    // 94 km that end 3 km from the start: within a twentieth of the distance
+  it('goes by how far the finish is from the start against how far the route gets from it', () => {
+    // 48.5 km out and 45.5 back: 3 km from the start, much less than half of 48.5
     const long = makeRoute(start, [{ bearing: 0, km: 48.5, steps: 97 }, { bearing: 180, km: 45.5, steps: 91 }]);
-    expect(routeTurn(long).loop).toBe(true);
-    // 10 km that end 3 km from the start
-    const short = makeRoute(start, [{ bearing: 0, km: 6.5, steps: 13 }, { bearing: 180, km: 3.5, steps: 7 }]);
-    expect(routeTurn(short).loop).toBe(false);
+    expect(routeTurn(long).returns).toBe(true);
+    // 6.5 km out and 3 back finishes 3.5 km away, more than half of 6.5; 3.5 back finishes 3 km away
+    const short = makeRoute(start, [{ bearing: 0, km: 6.5, steps: 13 }, { bearing: 180, km: 3, steps: 6 }]);
+    expect(routeTurn(short).returns).toBe(false);
+    const shorter = makeRoute(start, [{ bearing: 0, km: 6.5, steps: 13 }, { bearing: 180, km: 3.5, steps: 7 }]);
+    expect(routeTurn(shorter).returns).toBe(true);
+  });
+
+  it('is worked out once for a route', () => {
+    const route = northbound();
+    expect(routeTurn(route)).toBe(routeTurn(route));
+  });
+});
+
+describe('retracesItself', () => {
+  const start = { lat: 38.6, lng: -9.3 };
+
+  it('finds an out-and-back on the same road', () => {
+    expect(retracesItself(makeRoute(start, [{ bearing: 0, km: 15, steps: 15 }, { bearing: 180, km: 15, steps: 30 }]))).toBe(true);
+  });
+
+  it('does not take a loop, or a route from one place to another, for one', () => {
+    const square = makeRoute(start, [0, 90, 180, 270].map((bearing) => ({ bearing, km: 5, steps: 5 })));
+    expect(retracesItself(square)).toBe(false);
+    expect(retracesItself(northbound())).toBe(false);
+    // out and home on a road a kilometre away from the first one
+    const parallel = makeRoute(start, [{ bearing: 0, km: 15, steps: 15 }, { bearing: 90, km: 1, steps: 1 }, { bearing: 180, km: 15, steps: 15 }, { bearing: 270, km: 1, steps: 1 }]);
+    expect(retracesItself(parallel)).toBe(false);
+  });
+
+  it('is the same ride either way round', () => {
+    const route = makeRoute(start, [{ bearing: 0, km: 15, steps: 15 }, { bearing: 180, km: 15, steps: 15 }]);
+    const turned = { ...route, points: [...route.points].reverse().map((p) => ({ ...p, distance: 30 - p.distance })) };
+    expect(retracesItself(turned)).toBe(true);
+    expect(retracesItself(route)).toBe(true);
   });
 });
 
@@ -939,7 +991,7 @@ describe('analyseRoute order of the wind', () => {
 
   it('says a loop that sets off into the wind comes home with it', () => {
     const result = analyseRoute(outAndBack(0), northerly(), 0, 25);
-    expect(result.order.loop).toBe(true);
+    expect(result.order.returns).toBe(true);
     expect(result.order.first).toBeCloseTo(20, 6);
     expect(result.order.second).toBeCloseTo(-20, 6);
     expect(result.orderNote).toBe('Headwind out, tailwind home.');
@@ -967,16 +1019,20 @@ describe('analyseRoute order of the wind', () => {
     expect(result.orderNote).toBe('Headwind out, tailwind home.');
   });
 
-  it('speaks of first and later on a route that does not come back', () => {
-    // 20 km north and 10 km back south: 10 km from the start at the end, split at km 15
-    const route = makeRoute(start, [{ bearing: 0, km: 20, steps: 20 }, { bearing: 180, km: 10, steps: 10 }]);
+  it('says which comes first on a route that does not come back', () => {
+    // 20 km north and 8 km back south: 12 km from the start at the end, split at km 14
+    const route = makeRoute(start, [{ bearing: 0, km: 20, steps: 20 }, { bearing: 180, km: 8, steps: 8 }]);
     const result = analyseRoute(route, northerly(), 0, 25);
-    expect(result.order.loop).toBe(false);
+    expect(result.order.returns).toBe(false);
     expect(result.order.first).toBeCloseTo(20, 6);
-    // 5 km still into it, 10 km with it: (100 - 200) / 15
-    expect(result.order.second).toBeCloseTo(-6.667, 2);
-    expect(result.orderNote).toBe('Headwind first, tailwind later.');
-    expect(analyseRoute(route, steady(20, 180, 30), 0, 25).orderNote).toBe('Tailwind first, headwind later.');
+    // 6 km still into it, 8 km with it: (120 - 160) / 14
+    expect(result.order.second).toBeCloseTo(-2.857, 2);
+    expect(result.orderNote).toBe('Headwind in the first half.');
+    // further back south and the second half has the wind behind: 5 km against, 10 with
+    const further = makeRoute(start, [{ bearing: 0, km: 20, steps: 20 }, { bearing: 180, km: 10, steps: 10 }]);
+    expect(routeTurn(further).returns).toBe(false);
+    expect(analyseRoute(further, northerly(), 0, 25).orderNote).toBe('Headwind, then tailwind.');
+    expect(analyseRoute(further, steady(20, 180, 30), 0, 25).orderNote).toBe('Tailwind, then headwind.');
   });
 
   it('names the one part that has wind along the road when the other has none', () => {
@@ -992,14 +1048,15 @@ describe('analyseRoute order of the wind', () => {
   it('says so when the wind drops before the way home', () => {
     // 20 km/h from the north at the start, calm an hour later. At 20 km/h the turn comes after 45 minutes:
     // the way out meets 20 falling to 5, the way home what is left of it for a quarter of an hour.
-    const dying = everywhere([{ speed: 20, dir: 0, gust: 25 }, { speed: 0, dir: 0, gust: 0 }, { speed: 0, dir: 0, gust: 0 }, { speed: 0, dir: 0, gust: 0 }]);
+    const dying = everywhere([{ speed: 30, dir: 0, gust: 35 }, { speed: 0, dir: 0, gust: 0 }, { speed: 0, dir: 0, gust: 0 }, { speed: 0, dir: 0, gust: 0 }]);
     const result = analyseRoute(outAndBack(0), dying, 0, 20);
+    expect(result.advisory.tone).not.toBe('calm');
     expect(result.order.first).toBeGreaterThan(10);
-    expect(Math.abs(result.order.second)).toBeLessThan(3);
+    expect(Math.abs(result.order.second)).toBeLessThan(5);
     expect(result.orderNote).toBe('Headwind on the way out.');
     // and when it only gets up for the way home: calm for the first hour, then a southerly that builds.
     // Leaving a quarter past, the turn comes on the hour.
-    const rising = everywhere([{ speed: 0, dir: 180, gust: 0 }, { speed: 0, dir: 180, gust: 0 }, { speed: 20, dir: 180, gust: 25 }, { speed: 20, dir: 180, gust: 25 }]);
+    const rising = everywhere([{ speed: 0, dir: 180, gust: 0 }, { speed: 0, dir: 180, gust: 0 }, { speed: 30, dir: 180, gust: 35 }, { speed: 30, dir: 180, gust: 35 }]);
     const later = analyseRoute(outAndBack(0), rising, 0.25, 20);
     expect(Math.abs(later.order.first)).toBeLessThan(1e-6);
     expect(later.order.second).toBeGreaterThan(5);
@@ -1014,9 +1071,31 @@ describe('analyseRoute order of the wind', () => {
     expect(analyseRoute(outAndBack(0), steady(0, 0, 0), 0, 25).orderNote).toBeNull();
   });
 
-  it('needs 3 km/h along the road, on average, before it calls a part head or tailwind', () => {
-    expect(analyseRoute(outAndBack(0), steady(2.9, 0, 5), 0, 25).orderNote).toBeNull();
-    expect(analyseRoute(outAndBack(0), steady(3.1, 0, 5), 0, 25).orderNote).toBe('Headwind out, tailwind home.');
+  it('needs 5 km/h along the road, on average, before it calls a part head or tailwind', () => {
+    // half of the 30 km at 10 km/h against, half with no wind along it: 5 km/h against on the way out
+    const route = makeRoute({ lat: 38.6, lng: -9.3 }, [{ bearing: 0, km: 7.5, steps: 15 }, { bearing: 90, km: 7.5, steps: 15 }, { bearing: 270, km: 7.5, steps: 15 }, { bearing: 180, km: 7.5, steps: 15 }]);
+    const wind = (speed) => steady(speed, 0, speed);
+    expect(analyseRoute(route, wind(9.8), 0, 25).orderNote).toBeNull();
+    expect(analyseRoute(route, wind(10.2), 0, 25).orderNote).toBe('Headwind out, tailwind home.');
+  });
+
+  it('says nothing on a calm day, whatever little wind there is', () => {
+    const result = analyseRoute(outAndBack(0), steady(7, 0, 10), 0, 25);
+    expect(result.advisory.tone).toBe('calm');
+    expect(result.order.first).toBeCloseTo(7, 6);
+    expect(result.orderNote).toBeNull();
+  });
+
+  it('says nothing about a route ridden in laps', () => {
+    const laps = makeRoute(start, [
+      { bearing: 0, km: 5, steps: 5 },
+      { bearing: 180, km: 5, steps: 5 },
+      { bearing: 0, km: 5, steps: 5 },
+      { bearing: 180, km: 5, steps: 5 },
+    ]);
+    const result = analyseRoute(laps, northerly(), 0, 25);
+    expect(Number.isNaN(result.order.first)).toBe(true);
+    expect(result.orderNote).toBeNull();
   });
 
   it('says nothing when one part of the ride has no forecast', () => {
@@ -1033,11 +1112,14 @@ describe('analyseRoute order of the wind', () => {
 describe('analyseRoute score', () => {
   const crosswind = (extra = {}) => ({ speed: 10, dir: 90, gust: 12, ...extra });
   const hours = (...list) => everywhere(list);
+  // what a dry 10 km/h crosswind costs at 25 km/h
+  const CROSS_10 = windCost(0, 25, 10);
 
   it('is the wind cost averaged over the ride when it is dry and not gusty', () => {
     // into 20 km/h all the way: (45^2 - 25^2) / 50 = 28; with it: (5^2 - 25^2) / 50 = -12
     expect(analyseRoute(northbound(), northerly(), 0, 25).score).toBeCloseTo(28, 6);
     expect(analyseRoute(southbound(), northerly(), 0, 25).score).toBeCloseTo(-12, 6);
+    expect(analyseRoute(northbound(), northerly(), 0, 25).windScore).toBeCloseTo(28, 6);
   });
 
   it('finds a windy out-and-back harder than a calm one, although head and tailwind even out', () => {
@@ -1052,11 +1134,11 @@ describe('analyseRoute score', () => {
   it('is the same both ways round a loop in a steady wind, and not on the way there and the way back', () => {
     const corner = { lat: 38.6, lng: -9.3 };
     const sides = (...bearings) => makeRoute(corner, bearings.map((bearing) => ({ bearing, km: 10, steps: 10 })));
-    // a square ridden north first, and the same square ridden east first
-    const one = analyseRoute(sides(0, 90, 180, 270), northerly(), 0, 25);
-    const other = analyseRoute(sides(90, 0, 270, 180), northerly(), 0, 25);
-    // one side into it, one with it, two across: (28 - 12) / 4
-    expect(one.score).toBeCloseTo(4, 6);
+    // a square ridden north first, and the same square ridden east first, in a northerly without gusts
+    const one = analyseRoute(sides(0, 90, 180, 270), steady(20, 0, 20), 0, 25);
+    const other = analyseRoute(sides(90, 0, 270, 180), steady(20, 0, 20), 0, 25);
+    // one side into it, one with it, two across: (28 - 12 + 2 * the crosswind) / 4
+    expect(one.score).toBeCloseTo((28 - 12 + 2 * windCost(0, 25, 20)) / 4, 6);
     expect(other.score).toBeCloseTo(one.score, 6);
     // from one place to another it is not: 28 there, -12 back
     expect(analyseRoute(northbound(), northerly(), 0, 25).score).toBeGreaterThan(analyseRoute(southbound(), northerly(), 0, 25).score);
@@ -1064,35 +1146,46 @@ describe('analyseRoute score', () => {
 
   it('adds the rain by how much of the ride it wets, how likely it is and how hard it falls', () => {
     const dry = analyseRoute(northbound(), hours(crosswind(), crosswind(), crosswind(), crosswind()), 0, 25);
-    expect(dry.score).toBeCloseTo(0, 6);
-    // light rain all the way at 80%: 15 * 1 * 0.8 * 1
-    const light = crosswind({ rain: 1.2, rainChance: 80 });
-    expect(analyseRoute(northbound(), hours(light, light, light, light), 0, 25).score).toBeCloseTo(12, 6);
+    expect(dry.score).toBeCloseTo(CROSS_10, 6);
+    const rainScore = (h) => analyseRoute(northbound(), hours(h, h, h, h), 0, 25).score - CROSS_10;
+    // light rain all the way at 80%: 15 * 1 * 0.8
+    expect(rainScore(crosswind({ rain: 1.2, rainChance: 80 }))).toBeCloseTo(12, 6);
     // the same rain with a chance of 20%
-    const doubtful = crosswind({ rain: 1.2, rainChance: 20 });
-    expect(analyseRoute(northbound(), hours(doubtful, doubtful, doubtful, doubtful), 0, 25).score).toBeCloseTo(3, 6);
+    expect(rainScore(crosswind({ rain: 1.2, rainChance: 20 }))).toBeCloseTo(3, 6);
     // moderate rain counts half as much again, heavy rain two and a half times
-    const moderate = crosswind({ rain: 3, rainChance: 80 });
-    expect(analyseRoute(northbound(), hours(moderate, moderate, moderate, moderate), 0, 25).score).toBeCloseTo(18, 6);
-    const heavy = crosswind({ rain: 9, rainChance: 80 });
-    expect(analyseRoute(northbound(), hours(heavy, heavy, heavy, heavy), 0, 25).score).toBeCloseTo(30, 6);
+    expect(rainScore(crosswind({ rain: 3, rainChance: 80 }))).toBeCloseTo(18, 6);
+    expect(rainScore(crosswind({ rain: 9, rainChance: 80 }))).toBeCloseTo(30, 6);
     // rain on the second hour only wets 26 of the 50 km
+    const light = crosswind({ rain: 1.2, rainChance: 80 });
     const half = analyseRoute(northbound(), hours(crosswind(), crosswind(), light, light), 0, 25);
-    expect(half.score).toBeCloseTo(12 * (26 / 50), 6);
+    expect(half.score - CROSS_10).toBeCloseTo(12 * (26 / 50), 6);
+  });
+
+  it('counts a likely chance of rain without an amount as light rain', () => {
+    const score = (h) => analyseRoute(northbound(), hours(h, h, h, h), 0, 25).score - CROSS_10;
+    // 15 * 1 * 0.4
+    expect(score(crosswind({ rain: 0, rainChance: 40 }))).toBeCloseTo(6, 6);
+    // a smaller chance is nothing
+    expect(score(crosswind({ rain: 0, rainChance: 25 }))).toBeCloseTo(0, 6);
   });
 
   it('takes rain the forecast puts no chance on for more likely than not', () => {
     const wet = crosswind({ rain: 1.2, rainChance: undefined });
-    // 15 * 1 * 0.6 * 1
-    expect(analyseRoute(northbound(), hours(wet, wet, wet, wet), 0, 25).score).toBeCloseTo(9, 6);
+    // 15 * 1 * 0.6
+    expect(analyseRoute(northbound(), hours(wet, wet, wet, wet), 0, 25).score - CROSS_10).toBeCloseTo(9, 6);
   });
 
-  it('adds the gusts by how much of the ride they are a danger on', () => {
-    // 10 km/h across the road with gusts of 55: no wind cost, gusty all the way
-    expect(analyseRoute(northbound(), steady(10, 90, 55), 0, 25).score).toBeCloseTo(20, 6);
-    // gusts of 45 from the side are not yet the kind that count (35 across the road is)
-    expect(analyseRoute(northbound(), steady(40, 90, 45), 0, 25).score).toBeCloseTo(20, 6);
-    expect(analyseRoute(northbound(), steady(10, 90, 30), 0, 25).score).toBeCloseTo(0, 6);
+  it('adds the gusts gradually, across the road from 25 km/h and from any side from 40', () => {
+    const gustScore = (speed, dir, gust) => analyseRoute(northbound(), steady(speed, dir, gust), 0, 25).score
+      - analyseRoute(northbound(), steady(speed, dir, speed), 0, 25).score;
+    // 10 km/h across the road: gusts of 55 count in full, 35 for half, 25 for nothing
+    expect(gustScore(10, 90, 55)).toBeCloseTo(20, 6);
+    expect(gustScore(10, 90, 35)).toBeCloseTo(10, 6);
+    expect(gustScore(10, 90, 25)).toBeCloseTo(0, 6);
+    // from straight ahead only their strength counts: 50 is half way from 40 to 60
+    expect(gustScore(10, 0, 50)).toBeCloseTo(10, 6);
+    expect(gustScore(10, 0, 39)).toBeCloseTo(0, 6);
+    expect(gustScore(10, 0, 65)).toBeCloseTo(20, 6);
   });
 
   it('marks the ride wet only when the rain lasts for a real stretch of road', () => {
@@ -1158,6 +1251,15 @@ describe('scanDepartures', () => {
     expect(lost.known).toBe(false);
   });
 
+  it('needs a forecast for 95% of the route before it judges a ride', () => {
+    // 40 steps of 0.01 degrees north, up to the north edge of the forecast at 39 degrees, or 4 past it
+    const step = 0.01 * KM_PER_DEGREE;
+    const inside = makeRoute({ lat: 38.6, lng: -9.2 }, [{ bearing: 0, km: 40 * step, steps: 40 }]);
+    const over = makeRoute({ lat: 38.64, lng: -9.2 }, [{ bearing: 0, km: 40 * step, steps: 40 }]);
+    expect(scanDepartures(inside, building(), [0], 25)[0].known).toBe(true);
+    expect(scanDepartures(over, building(), [0], 25)[0].known).toBe(false);
+  });
+
   it('says which rides meet rain, how hard and how likely', () => {
     const dry = { speed: 10, dir: 90, gust: 12 };
     const wet = { ...dry, rain: 3, rainChance: 70 };
@@ -1172,62 +1274,84 @@ describe('scanDepartures', () => {
   });
 });
 
-describe('bestDepartures', () => {
-  const ride = (start, score, extra = {}) => ({ start, score, known: true, late: false, past: false, day: 'Mon', light: 'ride', ...extra });
+describe('bestWindows', () => {
+  // one ride per hour from 06:00 of day 0, with a score for each; `extra` sets more for some of them
+  const scan = (scores, extra = {}) => scores.map((score, i) => ({
+    time: (6 + i) * HOUR,
+    day: `day ${Math.floor((6 + i) / 24)}`,
+    known: true,
+    late: false,
+    past: false,
+    dark: 0,
+    score,
+    ...extra[i],
+  }));
+  const at = (hour) => hour * HOUR;
 
-  it('takes the easiest ride of each day, in the order of time', () => {
-    const best = bestDepartures([
-      ride(8, 6), ride(9, 4), ride(10, 5),
-      ride(32, 3, { day: 'Tue' }), ride(33, 1, { day: 'Tue' }), ride(34, 2, { day: 'Tue' }),
-    ]);
-    expect(best.map((d) => d.start)).toEqual([9, 33]);
+  it('takes the hours in a row within 1.5 of the best of the day', () => {
+    const { windows } = bestWindows(scan([9, 6, 5, 4, 5.4, 7, 5]), ['day 0']);
+    // 06:00 9, 07:00 6, 08:00 5, 09:00 4, 10:00 5.4, 11:00 7: the best is 09:00, 08:00 and 10:00 are close
+    expect(windows).toEqual([{ day: 'day 0', from: at(8), to: at(10), best: at(9), any: false }]);
   });
 
-  it('leaves out what can no longer be chosen, what ends after the forecast and what has no forecast', () => {
-    const best = bestDepartures([
-      ride(8, 1, { past: true }),
-      ride(9, 5),
-      ride(10, 2, { late: true }),
-      ride(11, 3, { known: false }),
-      ride(12, NaN),
-    ]);
-    expect(best.map((d) => d.start)).toEqual([9]);
+  it('is a single hour when no hour next to the best comes close', () => {
+    const { windows } = bestWindows(scan([9, 2, 9]), ['day 0']);
+    expect(windows[0]).toMatchObject({ from: at(7), to: at(7), best: at(7) });
   });
 
-  it('does not send anyone out in the dark for an easier ride', () => {
-    const best = bestDepartures([
-      ride(4, -5, { light: 'none' }),
-      ride(9, 6),
-      ride(18, 2, { light: 'start' }),
-    ]);
-    expect(best.map((d) => d.start)).toEqual([9]);
-  });
-
-  it('has nothing for a day whose daylight is too short by now, while another day has room', () => {
-    const best = bestDepartures([
-      ride(18, 2, { light: 'start' }),
-      ride(21, 1, { light: 'none' }),
-      ride(33, 4, { day: 'Tue' }),
-    ]);
-    expect(best.map((d) => d.start)).toEqual([33]);
-  });
-
-  it('falls back to rides that set off in daylight when none fits in a day, and then to any', () => {
-    const long = [ride(6, 7, { light: 'start' }), ride(7, 5, { light: 'start' }), ride(22, 1, { light: 'none' })];
-    expect(bestDepartures(long).map((d) => d.start)).toEqual([7]);
-    const polar = [ride(6, 7, { light: 'none' }), ride(7, 5, { light: 'none' })];
-    expect(bestDepartures(polar).map((d) => d.start)).toEqual([7]);
+  it('keeps to the hours in a row: a good hour later in the day does not stretch the window', () => {
+    const { windows } = bestWindows(scan([4, 4.5, 9, 4.2]), ['day 0']);
+    expect(windows[0]).toMatchObject({ from: at(6), to: at(7), best: at(6) });
   });
 
   it('lets the earlier ride win a tie', () => {
-    expect(bestDepartures([ride(9, 4), ride(10, 4), ride(11, 4)]).map((d) => d.start)).toEqual([9]);
+    expect(bestWindows(scan([9, 4, 9, 4]), ['day 0']).windows[0].best).toBe(at(7));
   });
 
-  it('stops at three days unless told otherwise, and is empty when there is nothing to choose from', () => {
-    const week = ['Mon', 'Tue', 'Wed', 'Thu'].map((day, i) => ride(9 + 24 * i, 4, { day }));
-    expect(bestDepartures(week).map((d) => d.day)).toEqual(['Mon', 'Tue', 'Wed']);
-    expect(bestDepartures(week, 1).map((d) => d.day)).toEqual(['Mon']);
-    expect(bestDepartures([])).toEqual([]);
-    expect(bestDepartures([ride(9, 4, { past: true })])).toEqual([]);
+  it('finds a window on each day asked for, in the order asked', () => {
+    // 06:00 of day 0 to 05:00 of day 2
+    const scores = Array.from({ length: 48 }, (_, i) => (i === 3 || i === 28 ? 1 : 8));
+    const { windows } = bestWindows(scan(scores), ['day 0', 'day 1', 'day 2']);
+    expect(windows.map((w) => [w.day, w.best])).toEqual([['day 0', at(9)], ['day 1', at(34)], ['day 2', at(48)]]);
+    expect(bestWindows(scan(scores), ['day 1']).windows.map((w) => w.day)).toEqual(['day 1']);
+  });
+
+  it('leaves out what can no longer be chosen, what ends after the forecast and what has no forecast', () => {
+    const { windows } = bestWindows(scan([1, 5, 2, 3, NaN], { 0: { past: true }, 2: { late: true }, 3: { known: false } }), ['day 0']);
+    expect(windows[0]).toMatchObject({ from: at(7), to: at(7), best: at(7) });
+  });
+
+  it('does not send anyone out in the dark for an easier ride', () => {
+    const { windows, unlit } = bestWindows(scan([-5, 6, 6.5, 2], { 0: { dark: 1 }, 3: { dark: 2 } }), ['day 0']);
+    expect(windows[0]).toMatchObject({ from: at(7), to: at(8), best: at(7) });
+    expect(unlit).toEqual([]);
+  });
+
+  it('says which days have no ride left in the light, while another day has one', () => {
+    // day 0 from 18:00: all of it in the dark; day 1 has light
+    const rides = scan(Array.from({ length: 24 }, () => 4)).map((d, i) => ({ ...d, dark: i < 18 || i > 30 ? 1 : 0 }));
+    const { windows, unlit } = bestWindows(rides.slice(12), ['day 0', 'day 1']);
+    expect(windows.map((w) => w.day)).toEqual(['day 1']);
+    expect(unlit).toEqual(['day 0']);
+  });
+
+  it('offers the rides with the least of the dark when no ride of the whole scan fits in the light', () => {
+    const { windows, unlit } = bestWindows(scan([1, 5, 6, 4], { 0: { dark: 3 }, 1: { dark: 1 }, 2: { dark: 1 }, 3: { dark: 2 } }), ['day 0']);
+    expect(windows[0]).toMatchObject({ from: at(7), to: at(8), best: at(7) });
+    expect(unlit).toEqual([]);
+  });
+
+  it('says any time when the window holds every hour in the light, and there are three or more', () => {
+    expect(bestWindows(scan([4, 4.5, 5]), ['day 0']).windows[0].any).toBe(true);
+    // two hours are just two hours
+    expect(bestWindows(scan([4, 4.5]), ['day 0']).windows[0].any).toBe(false);
+    // the dark hours do not count
+    expect(bestWindows(scan([4, 4.5, 5, 1], { 3: { dark: 1 } }), ['day 0']).windows[0].any).toBe(true);
+    expect(bestWindows(scan([4, 4.5, 5, 9]), ['day 0']).windows[0].any).toBe(false);
+  });
+
+  it('is empty when there is nothing to choose from', () => {
+    expect(bestWindows([], ['day 0'])).toEqual({ windows: [], unlit: [] });
+    expect(bestWindows(scan([4], { 0: { past: true } }), ['day 0'])).toEqual({ windows: [], unlit: [] });
   });
 });

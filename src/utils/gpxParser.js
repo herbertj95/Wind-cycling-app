@@ -249,6 +249,27 @@ function setBearings(points) {
 }
 
 /**
+ * Where on a route the rider is after `km`: { lat, lng }, between the two points around it.
+ * - points: of a route from parseGpxData, in the order of their distance
+ */
+export function positionAt(points, km) {
+  const last = points.length - 1;
+  if (km <= points[0].distance) return points[0];
+  if (km >= points[last].distance) return points[last];
+  let lo = 0;
+  let hi = last;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].distance <= km) lo = mid;
+    else hi = mid;
+  }
+  const a = points[lo];
+  const b = points[hi];
+  const t = (km - a.distance) / (b.distance - a.distance);
+  return { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
+}
+
+/**
  * The same route ridden the other way: the finish becomes the start. Distances count from the new
  * start, headings turn round, and the climbing is what used to be the descent. `reversed` says whether
  * the route now runs against the direction it was recorded or drawn in.

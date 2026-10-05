@@ -1,4 +1,5 @@
 // Where the sun stands, worked out from the date and the position: day and night without asking any service.
+import { positionAt } from './gpxParser';
 
 const RAD = Math.PI / 180;
 const DAY = 86400;
@@ -33,17 +34,29 @@ export function isDaylight(unixSeconds, lat, lng) {
   return sunAltitude(unixSeconds, lat, lng) > HORIZON_DEG;
 }
 
+// Light enough to ride by lasts until the end of civil twilight, with the centre of the sun this far below
+// the horizon, and starts again at its beginning in the morning
+const CIVIL_TWILIGHT_DEG = -6;
+
+/** Whether there is light enough to ride by at a moment (unix seconds) and a position: civil twilight or day. */
+export function isRidingLight(unixSeconds, lat, lng) {
+  return sunAltitude(unixSeconds, lat, lng) > CIVIL_TWILIGHT_DEG;
+}
+
 /**
- * How much of a ride is in daylight: 'ride' when all of it is, 'start' when it sets off in daylight and
- * the night catches up with it, 'none' when it sets off in the dark.
- * - start, end: unix seconds; from, to: { lat, lng } of where the ride starts and where it finishes
+ * How many times the dark meets a ride: it is looked at where the rider is when they set off, at every
+ * full hour after that and when they finish. 0 for a ride all in the light, which is what the app offers.
+ * - route: from parseGpxData; start: unix seconds; rideKmh: the average riding speed
  */
-export function rideLight(start, end, from, to) {
-  if (!isDaylight(start, from.lat, from.lng)) return 'none';
-  if (!isDaylight(end, to.lat, to.lng)) return 'start';
-  // a ride of many hours can set off one day and finish the next, with a night in between
-  for (let t = start + 3600; t < end; t += 3600) {
-    if (!isDaylight(t, from.lat, from.lng)) return 'start';
+export function darkChecks(route, start, rideKmh) {
+  const hours = route.totalDistance / rideKmh;
+  const moments = [];
+  for (let h = 0; h < hours; h++) moments.push(h);
+  moments.push(hours);
+  let dark = 0;
+  for (const h of moments) {
+    const at = positionAt(route.points, h * rideKmh);
+    if (!isRidingLight(start + h * 3600, at.lat, at.lng)) dark++;
   }
-  return 'ride';
+  return dark;
 }

@@ -1,5 +1,4 @@
-import { Fragment } from 'react';
-import { ArrowsLeftRight, CaretDown, CaretUp, Drop, Pause, Play, Star, Warning, Wind, X } from '@phosphor-icons/react';
+import { ArrowsLeftRight, CaretDown, CaretUp, Clock, Drop, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
 import RouteChart from './RouteChart';
 import { RIDE_SPEEDS, windPeaks } from '../utils/routeAnalysis';
 import { formatRain, isWet } from '../utils/rain';
@@ -7,6 +6,14 @@ import { formatDuration } from '../utils/time';
 
 const PLAYBACK_RATES = [1, 2.5, 5];
 const DETAILS_ID = 'route-details';
+const FLIP_HINT_ID = 'route-flip-hint';
+
+// a best time to leave in a few words: "today 07:00 to 10:00", "now to 11:00", "tomorrow any time"
+function windowText(w) {
+  if (w.any) return `${w.dayLabel} any time`;
+  const from = w.fromLabel === 'now' ? 'now' : `${w.dayLabel} ${w.fromLabel}`;
+  return w.toLabel ? `${from} to ${w.toLabel}` : from;
+}
 
 function describePoint(point, wind) {
   const place = `km ${point.distance.toFixed(1)}, ${Math.round(point.ele)} m`;
@@ -30,9 +37,13 @@ const NO_WIND_TEXT = {
  * a plain-language verdict, and the profile you can ride along.
  * - analysis: from analyseRoute
  * - windState: how far the forecast along the route is, 'ready' | 'loading' | 'failed'
- * - bestTimes: the best hour to leave on each of the coming days, [{ time, day, clock }] with `day` as
- *   'today', 'tomorrow' or a date and `clock` as "09:00" or 'now'; leavingAt is the hour chosen now
- * - flipHint: what riding the route the other way round would be like at this hour, 'easier' | 'harder' | null
+ * - bestTimes: the best time to leave on each of the coming days (see bestWindows), each with its words:
+ *   [{ from, to, best, any, dayLabel, fromLabel, toLabel }], `dayLabel` 'today', 'tomorrow' or a date,
+ *   `fromLabel` "09:00" or 'now', and `toLabel` null for a single hour
+ * - noLightToday: there is no time left today to do the ride in the light
+ * - leavingAt: the hour chosen now; onLeaveAt(time) picks another one for the rider to set off at
+ * - onFlip: turns the route round, or null when that would be the same ride
+ * - flipEasier: the wind makes the route clearly easier the other way round at this hour
  * - collapsed: only the name, the buttons and the wind along the route as a low strip are shown, to
  *   leave the map free
  * - colors: { tail, neutral, head } for the current theme
@@ -52,10 +63,11 @@ export default function RoutePanel({
   onRideKmh,
   startLabel,
   bestTimes,
+  noLightToday,
   leavingAt,
   onLeaveAt,
   onFlip,
-  flipHint,
+  flipEasier,
   collapsed,
   onToggleCollapsed,
   colors,
@@ -82,20 +94,26 @@ export default function RoutePanel({
     <section className={collapsed ? 'route-panel panel collapsed' : 'route-panel panel'}>
       <div className="route-head">
         <h2 title={route.name}>{route.name}</h2>
-        <span className="route-meta">
-          {route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing{route.reversed && ', reversed'}
-        </span>
-        <button
-          type="button"
-          className="route-flip"
-          onClick={onFlip}
-          title="Ride this route the other way round"
-          aria-label={flipHint ? `Reverse the route: ${flipHint} that way at this hour` : 'Reverse the route'}
-        >
-          <ArrowsLeftRight size={15} aria-hidden="true" />
-          <span>Reverse</span>
-          {flipHint && <small>{flipHint} that way</small>}
-        </button>
+        <div className="route-sub">
+          <span className="route-meta">
+            {route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing{route.reversed && ', reversed'}
+          </span>
+          {onFlip && (
+            <button
+              type="button"
+              className="route-flip"
+              onClick={onFlip}
+              title="Ride this route the other way round"
+              aria-label="Reverse the route"
+              aria-pressed={Boolean(route.reversed)}
+              aria-describedby={flipEasier ? FLIP_HINT_ID : undefined}
+            >
+              <ArrowsLeftRight size={15} aria-hidden="true" />
+              <span>Reverse</span>
+              {flipEasier && <small id={FLIP_HINT_ID}>easier that way</small>}
+            </button>
+          )}
+        </div>
         <div className="route-actions">
           <button type="button" className="pill-button" onClick={onTogglePlay} aria-label={playing ? 'Pause the ride' : 'Ride the route'}>
             {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
@@ -173,24 +191,26 @@ export default function RoutePanel({
                   {analysis.outsideKm > total * 0.05 && (windState === 'loading' ? ' Part of the wind is still loading.' : ' Part of it has no forecast.')}
                 </p>
 
-                {bestTimes.length > 0 && (
+                {(bestTimes.length > 0 || noLightToday) && (
                   <p className="route-best">
-                    <Star size={13} weight="fill" aria-hidden="true" />
+                    <Clock size={13} weight="bold" aria-hidden="true" />
                     <span>
-                      Best time to leave:{' '}
-                      {bestTimes.map((best, i) => {
-                        const when = best.clock === 'now' ? 'now' : `${best.day} ${best.clock}`;
-                        return (
-                          <Fragment key={best.time}>
-                            {i > 0 && ', '}
-                            {/* the one the plan is for is not a button: there is nothing left to choose */}
-                            {best.time === leavingAt
-                              ? <b>{when}</b>
-                              : <button type="button" className="text-button" onClick={() => onLeaveAt(best.time)}>{when}</button>}
-                          </Fragment>
-                        );
-                      })}
-                      .
+                      {bestTimes.length > 0 && 'Best: '}
+                      {bestTimes.map((w, i) => (
+                        <span key={w.from} className="best-time">
+                          {i > 0 && ', '}
+                          <button
+                            type="button"
+                            className="text-button"
+                            aria-pressed={leavingAt >= w.from && leavingAt <= w.to}
+                            onClick={() => onLeaveAt(w.best)}
+                          >
+                            {windowText(w)}
+                          </button>
+                        </span>
+                      ))}
+                      {bestTimes.length > 0 && noLightToday && '. '}
+                      {noLightToday && 'Not enough daylight left today.'}
                     </span>
                   </p>
                 )}

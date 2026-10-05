@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchObservations, inIpmaArea, nearestStation } from '../utils/ipma';
+import { fetchObservations, inIpmaArea, loadObservations, nearestStation, saveObservations } from '../utils/ipma';
 
 // IPMA publishes once an hour. Its file is asked for again when the copy here is this old, and after a
 // failure once this long has passed.
 const REFRESH_MS = 20 * 60000;
 const RETRY_MS = 5 * 60000;
 
-// One copy for the life of the app, whichever place is in focus
-const held = { stations: null, at: 0, triedAt: 0, loading: null };
+// One copy for the life of the app, whichever place is in focus; it starts from the one kept on the device
+const kept = loadObservations();
+const held = { stations: kept?.stations ?? null, at: kept?.at ?? 0, triedAt: 0, loading: null };
 
 /**
  * The weather station nearest to a position, with the wind it last measured: { name, km, time, speed,
@@ -33,6 +34,7 @@ export function useObserved(lat, lng, wanted) {
         .then((list) => {
           held.stations = list;
           held.at = Date.now();
+          saveObservations(list, held.at);
         })
         .catch(() => {
           // the readout simply goes without the measurement
