@@ -15,8 +15,10 @@ const MIN_PROFILE = 20;
  * Drag along it (or use the arrow keys) to ride the route.
  * - wind: per-point analysis from analyseRoute, parallel to route.points; leave it out to draw the profile alone
  * - valueText: what the current position is, in words, for screen readers
+ * - compact: one low strip without any text, for the folded route panel: the wind band alone, or the
+ *   profile while there is no wind
  */
-export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, tailColor, valueText }) {
+export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, tailColor, valueText, compact = false }) {
   const svgRef = useRef(null);
   const dragging = useRef(false);
   const [size, setSize] = useState({ width: 600, height: 118 });
@@ -36,10 +38,16 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
 
   const shape = useMemo(() => {
     // Without wind the profile takes the whole height. With it, the two halve what is left once the
-    // labels of the strongest winds have their room, above the band and under it.
-    const elevationHeight = wind ? Math.max(MIN_PROFILE, (height - 2 * LABEL_ROOM) / 2) : height - 16;
-    const windTop = elevationHeight + LABEL_ROOM;
-    const windHeight = Math.max(0, height - windTop - LABEL_ROOM);
+    // labels of the strongest winds have their room, above the band and under it. A compact chart is
+    // a single strip from edge to edge.
+    let elevationHeight = compact ? height : height - 16;
+    let windTop = 1;
+    let windHeight = Math.max(0, height - 2);
+    if (wind && !compact) {
+      elevationHeight = Math.max(MIN_PROFILE, (height - 2 * LABEL_ROOM) / 2);
+      windTop = elevationHeight + LABEL_ROOM;
+      windHeight = Math.max(0, height - windTop - LABEL_ROOM);
+    }
     const baseline = windTop + windHeight / 2;
 
     let eleMin = Infinity;
@@ -75,7 +83,7 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
     }
 
     return { elevationHeight, windTop, windHeight, baseline, eleMax, profile, head, tail, peaks, x, yEle };
-  }, [points, wind, total, width, height]);
+  }, [points, wind, total, width, height, compact]);
 
   const scrub = (clientX) => {
     const rect = svgRef.current.getBoundingClientRect();
@@ -106,11 +114,13 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
 
   const cursorX = shape.x(cursor);
   const cursorBottom = wind ? shape.windTop + shape.windHeight : shape.elevationHeight;
+  // a compact chart with wind has no room for the profile as well
+  const showProfile = !(compact && wind);
 
   return (
     <svg
       ref={svgRef}
-      className="route-chart"
+      className={compact ? 'route-chart compact' : 'route-chart'}
       viewBox={`0 0 ${width} ${height}`}
       role="slider"
       tabIndex={0}
@@ -135,9 +145,13 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
       }}
       onKeyDown={onKeyDown}
     >
-      <path d={`${shape.profile}L${width} ${shape.elevationHeight}L0 ${shape.elevationHeight}Z`} fill="var(--track)" />
-      <path d={shape.profile} fill="none" stroke="var(--ink-2)" strokeWidth="1.5" />
-      <text x={width - 2} y="12" textAnchor="end">up to {Math.round(shape.eleMax)} m</text>
+      {showProfile && (
+        <>
+          <path d={`${shape.profile}L${width} ${shape.elevationHeight}L0 ${shape.elevationHeight}Z`} fill="var(--track)" />
+          <path d={shape.profile} fill="none" stroke="var(--ink-2)" strokeWidth="1.5" />
+        </>
+      )}
+      {!compact && <text x={width - 2} y="12" textAnchor="end">up to {Math.round(shape.eleMax)} m</text>}
 
       {wind && (
         <>
@@ -146,26 +160,30 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
           <line x1="0" x2={width} y1={shape.baseline} y2={shape.baseline} stroke="var(--ink-3)" strokeWidth="1" />
           {/* The strongest wind each way: a hairline at the height it reaches and its value on the far
               side of that line from the band, where nothing is drawn. */}
-          {shape.peaks.head > 0 && (
+          {!compact && shape.peaks.head > 0 && (
             <line x1="0" x2={width} y1={shape.peaks.headY} y2={shape.peaks.headY} stroke="var(--hair)" strokeWidth="1" />
           )}
-          {shape.peaks.tail > 0 && (
+          {!compact && shape.peaks.tail > 0 && (
             <line x1="0" x2={width} y1={shape.peaks.tailY} y2={shape.peaks.tailY} stroke="var(--hair)" strokeWidth="1" />
           )}
-          <text x="4" y={shape.peaks.headY - 4}>
-            {shape.peaks.head > 0 ? `headwind up to ${shape.peaks.head} km/h` : 'no headwind'}
-          </text>
-          <text x="4" y={shape.peaks.tailY + 12}>
-            {shape.peaks.tail > 0 ? `tailwind up to ${shape.peaks.tail} km/h` : 'no tailwind'}
-          </text>
+          {!compact && (
+            <>
+              <text x="4" y={shape.peaks.headY - 4}>
+                {shape.peaks.head > 0 ? `headwind up to ${shape.peaks.head} km/h` : 'no headwind'}
+              </text>
+              <text x="4" y={shape.peaks.tailY + 12}>
+                {shape.peaks.tail > 0 ? `tailwind up to ${shape.peaks.tail} km/h` : 'no tailwind'}
+              </text>
+            </>
+          )}
         </>
       )}
 
       {/* the bottom left corner is left to the tailwind label, which comes down to it in a strong tailwind */}
-      <text x={width} y={height - 1} textAnchor="end">{Math.round(total)} km</text>
+      {!compact && <text x={width} y={height - 1} textAnchor="end">{Math.round(total)} km</text>}
 
       <line x1={cursorX} x2={cursorX} y1="0" y2={cursorBottom} stroke="var(--ink)" strokeWidth="1.5" />
-      <circle cx={cursorX} cy={shape.yEle(cursor)} r="4" fill="var(--ink)" stroke="var(--page)" strokeWidth="2" />
+      {showProfile && <circle cx={cursorX} cy={shape.yEle(cursor)} r="4" fill="var(--ink)" stroke="var(--page)" strokeWidth="2" />}
     </svg>
   );
 }
