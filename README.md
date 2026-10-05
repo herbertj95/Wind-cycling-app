@@ -93,6 +93,7 @@ On Windows you can also double-click `start-app.bat`.
 | `npm test` | Unit tests for the wind, the forecast download and the route maths |
 | `npm run lint` | ESLint |
 | `npm run android:sync` | Builds and copies the web app into the Android project |
+| `npm run android:icons` | Makes the Android start-up screens and the icons for old launchers from the SVGs in `assets/` |
 | `npm run routes:slim` | Strips timestamps and extra points from the GPX files in `public/routes` |
 
 ### Android
@@ -112,6 +113,8 @@ cd android
 ```
 
 The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`: copy it to the phone and open it there to install it.
+
+The app icon is the W of Wind drawn as a route in the app's three wind colours. It lives in four places that are changed together: `public/favicon.svg` for the browser, `assets/icon-only.svg` and `assets/splash.svg` (with its copy `splash-dark.svg`) for `npm run android:icons`, and the two vector layers of the Android icon in `android/app/src/main/res/drawable/ic_launcher_*.xml`, which are edited by hand so the icon stays sharp at any size.
 
 ---
 

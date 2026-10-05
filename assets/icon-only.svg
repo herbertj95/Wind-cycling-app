@@ -1,5 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 18 72 72">
-  <!-- the app icon: see assets/icon-only.svg -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="18 18 72 72">
+  <!-- The app icon in one piece: the W of Wind drawn as a route in the colours the app paints the wind
+       with (blue behind you, grey across or light, red against you), with the rider as the dot.
+       `npm run android:icons` makes from it the icons for launchers older than adaptive icons.
+       The same drawing is in public/favicon.svg, in splash.svg and, as the two layers of the adaptive
+       icon, in android/app/src/main/res/drawable/ic_launcher_*.xml: change them together. -->
   <defs>
     <linearGradient id="night" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#11293b"/>

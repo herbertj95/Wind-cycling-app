@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The mark of ic_launcher_foreground.xml in one colour, for launchers that tint the icons to match
+     the wallpaper (Android 13 on). Only its shape is used. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M33,38L43,72L54,48L65,72L75,38"
+        android:strokeColor="#000000"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M68.5,38a6.5,6.5 0 1,0 13,0a6.5,6.5 0 1,0 -13,0z"
+        android:fillColor="#000000" />
+</vector>

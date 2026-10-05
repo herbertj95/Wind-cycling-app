@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2732" height="2732" viewBox="0 0 2732 2732">
+  <!-- What shows while the app starts: the mark of icon-only.svg in the middle of the night map's
+       colour. Screens are cut from the middle of this square, upright or on their side. -->
+  <rect width="2732" height="2732" fill="#0a1a27"/>
+  <g transform="translate(1366 1366) scale(7.5) translate(-54 -55)">
+    <path d="M43 72L54 48L65 72" fill="none" stroke="#8fa5b3" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M33 38L43 72" fill="none" stroke="#3987e5" stroke-width="8" stroke-linecap="round"/>
+    <path d="M65 72L75 38" fill="none" stroke="#e66767" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="75" cy="38" r="6.5" fill="#eef4f7"/>
+  </g>
+</svg>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The W of Wind drawn as a route in the colours the app paints the wind with: blue behind you, grey
+     across or light, red against you. The dot is the rider.
+     A launcher shows the middle 72 of this 108 canvas: everything stays within 33 of the centre, so
+     no launcher shape cuts it. The same drawing is in ic_launcher_monochrome.xml, assets/icon-only.svg,
+     assets/splash.svg and public/favicon.svg. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M43,72L54,48L65,72"
+        android:strokeColor="#8FA5B3"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M33,38L43,72"
+        android:strokeColor="#3987E5"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M65,72L75,38"
+        android:strokeColor="#E66767"
+        android:strokeWidth="8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M68.5,38a6.5,6.5 0 1,0 13,0a6.5,6.5 0 1,0 -13,0z"
+        android:fillColor="#EEF4F7" />
+</vector>
