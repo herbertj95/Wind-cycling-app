@@ -11,6 +11,13 @@ const BARS_ID = 'timebar-hours';
 // Arrows for the wind direction are drawn every so many hours, the fewest that keeps them this far apart
 const ARROW_GAP_PX = 14;
 const ARROW_EVERY = [1, 2, 3, 4, 6, 12];
+// The hour of the clock is written under every third bar, or every sixth where those would be closer than this
+const HOUR_GAP_PX = 16;
+const HOUR_EVERY = [3, 6, 12];
+// Room the date takes under the first bars of a day, from the left edge of the first one; and what
+// half a digit of an hour takes
+const DATE_ROOM_PX = 46;
+const HALF_DIGIT_PX = 3.1;
 
 function relativeLabel(hoursFromNow) {
   if (hoursFromNow === 0) return 'now';
@@ -21,8 +28,9 @@ function relativeLabel(hoursFromNow) {
  * Two days of forecast, one bar per hour. Tap or drag to choose the hour shown on the map.
  * A bar is the wind speed at one place, with gusts as the paler cap. An hour with rain stands on a teal
  * foot, taller the harder it rains and paler when the rain is only possible. Above the bars, arrows show
- * which way the wind blows as the hours go by. With a route, the place is its start, and a short line
- * under the bars marks the best time to leave on each day.
+ * which way the wind blows as the hours go by; under them stand the hours of the clock (9, 12, 15...) and,
+ * where a day starts, its date. With a route, the place is its start, and a short line under the bars
+ * marks the best time to leave on each day.
  * - hours: [{ time, speed, gust, from, rain, rainChance }], one per hour; speed, gust and from are null
  *   while that hour is not loaded, and rain (mm in that hour) and its chance (percent) are not numbers
  *   where the forecast does not give them
@@ -81,6 +89,18 @@ export default function TimeBar({
   const slot = barsWidth / hours.length;
   const every = slot > 0 ? ARROW_EVERY.find((n) => n * slot >= ARROW_GAP_PX) ?? 24 : 0;
   const arrows = markedHours(clockHours, every);
+  // The hours written under the bars. Midnight has the date instead, and so have the hours after it
+  // that the date reaches under.
+  const hourEvery = slot > 0 ? HOUR_EVERY.find((n) => n * slot >= HOUR_GAP_PX) ?? 24 : 0;
+  const hourMarks = markedHours(clockHours, hourEvery);
+  const opensDay = hours.map((h, i) => i > 0 && days[i] !== days[i - 1]);
+  const numbered = hours.map((h, i) => {
+    // how many bars back the date is; the first day on the bar has none
+    const dated = opensDay.lastIndexOf(true, i);
+    const sinceDate = dated < 0 ? Infinity : i - dated;
+    const left = (sinceDate + 0.5) * slot - String(clockHours[i]).length * HALF_DIGIT_PX;
+    return hourMarks[i] && sinceDate > 0 && left >= DATE_ROOM_PX;
+  });
 
   const pick = (clientX) => {
     const rect = barsRef.current.getBoundingClientRect();
@@ -217,6 +237,7 @@ export default function TimeBar({
                     <path d="M6 1v9.5M6 10.5L2.5 6.5M6 10.5l3.5-4" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 ) : <b className="bar-calm" />)}
+                {numbered[i] && <span className="bar-hour">{clockHours[i]}</span>}
                 {!empty && (
                   <>
                     <i className="gust" style={{ height: `${(h.gust / scaleMax) * 100}%` }} />

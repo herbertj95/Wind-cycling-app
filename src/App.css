@@ -1122,14 +1122,15 @@
   align-items: center;
 }
 
-/* the bars, with a row above them for the wind arrows and one under them for the dates */
+/* the bars, with a row above them for the wind arrows and, under them, a thin one for the marks (the
+   chosen hour, the best time to leave) and one for the hours of the clock and the dates */
 .timebar-bars {
   position: relative;
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 58px;
-  padding: 12px 0 14px;
+  height: 64px;
+  padding: 12px 0 20px;
   border-radius: 4px;
   cursor: pointer;
   touch-action: none;
@@ -1218,7 +1219,7 @@
 /* the best time to leave on a day, as a short line in the row of dates, just under its bars */
 .bars-best {
   position: absolute;
-  bottom: 9px;
+  bottom: 15px;
   height: 2px;
   border-radius: 1px;
   background: var(--ink-2);
@@ -1227,7 +1228,7 @@
 
 /* with a route there is a little more room for the bars of its start */
 .dock:has(.route-panel) .timebar-bars {
-  height: 69px;
+  height: 75px;
 }
 
 /* an hour whose wind is not loaded keeps its place as a faint mark */
@@ -1277,17 +1278,38 @@
 .bar.day::before {
   content: attr(data-day);
   position: absolute;
-  bottom: -15px;
+  bottom: -21px;
   left: 0;
   display: flex;
   align-items: flex-end;
-  height: 100%;
+  height: calc(100% + 6px);
   padding-left: 4px;
   border-left: 1px solid var(--hair);
   font-size: 12px;
   color: var(--ink-3);
   white-space: nowrap;
   pointer-events: none;
+}
+
+/* the hour of the clock under its bar, on the line of the dates */
+.bar-hour {
+  position: absolute;
+  bottom: -21px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--ink-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.bar.past .bar-hour {
+  opacity: 0.6;
+}
+
+.bar.selected .bar-hour {
+  color: var(--ink);
 }
 
 /* ---------- things drawn on the map ---------- */
@@ -1732,7 +1754,7 @@
   }
 
   .dock:has(.route-panel) .timebar-bars {
-    height: 57px;
+    height: 63px;
   }
 
   /* The measured wind takes the place of the note, on one line: how far the station is and whose it
@@ -1824,7 +1846,7 @@
 
   .timebar-bars,
   .dock:has(.route-panel) .timebar-bars {
-    height: 52px;
+    height: 58px;
   }
 
   /* beside the buttons there is only room for the sign of Reverse */
