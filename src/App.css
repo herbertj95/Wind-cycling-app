@@ -842,8 +842,11 @@
   color: var(--ink);
 }
 
-/* the best time to leave on each of the coming days, each a button that picks it; one line that does not wrap */
+/* the best time to leave on each of the coming days, each a button that picks it; one line that does not wrap.
+   Above what comes after it: on a touch screen its buttons reach down over the coloured bar. */
 .route-best {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -860,15 +863,21 @@
 
 .route-best > span {
   min-width: 0;
+  /* room for the focus ring of the buttons, which the clipping of the line would cut off; only the
+     buttons take taps, not that room around them */
+  padding: 4px;
+  margin: -4px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .route-best .text-button {
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
+  pointer-events: auto;
 }
 
 /* the one the plan is for */
@@ -1565,16 +1574,26 @@
     display: inline;
   }
 
-  /* the numbers stay whole; the date gives way first */
+  /* Where the line is short, the date gives way first, then the numbers; the clock always stays. The
+     date and the clock take their places in the line as if the strong around them were not there. */
+  .timebar-label {
+    gap: 6px;
+  }
+
   .timebar-label strong {
+    display: contents;
+  }
+
+  .timebar-date {
+    flex: 0 1000 auto;
     min-width: 0;
+    margin-right: -2px;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .timebar-label > span:first-of-type {
+  .timebar-clock {
     flex: none;
-    max-width: 75%;
   }
 
   .notice {

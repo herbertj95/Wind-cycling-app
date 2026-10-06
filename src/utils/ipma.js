@@ -14,8 +14,13 @@ const AREAS = [
   [32.2, -17.6, 33.4, -15.9],
   [36.6, -31.7, 40, -24.7],
 ];
-// Where the last download is kept, so the app does not open without it
+// Where the last download is kept, so the app does not open without it. The storage is only touched
+// when it is used: where the browser refuses it, even looking at it throws.
 const STORAGE_KEY = 'wind-ipma-v1';
+const deviceStorage = {
+  getItem: (key) => localStorage.getItem(key),
+  setItem: (key, value) => localStorage.setItem(key, value),
+};
 /** A station further away than this says little about the wind at a place. */
 export const STATION_RANGE_KM = 30;
 // The forecast is called right when it is within this many km/h of what was measured
@@ -98,7 +103,7 @@ export function nearestStation(stations, lat, lng, maxKm = STATION_RANGE_KM) {
  * The last download kept on the device: { stations, at } with `at` when it was downloaded (ms), or null
  * when nothing usable is kept.
  */
-export function loadObservations(storage = localStorage) {
+export function loadObservations(storage = deviceStorage) {
   try {
     const saved = JSON.parse(storage.getItem(STORAGE_KEY));
     if (!Number.isFinite(saved?.at) || !Array.isArray(saved.stations)) return null;
@@ -110,7 +115,7 @@ export function loadObservations(storage = localStorage) {
 }
 
 /** Keeps a download on the device (see loadObservations). Without storage it is simply not kept. */
-export function saveObservations(stations, at, storage = localStorage) {
+export function saveObservations(stations, at, storage = deviceStorage) {
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify({ at, stations }));
   } catch {

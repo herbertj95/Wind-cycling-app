@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CaretDown, CaretUp, Pause, Play } from '@phosphor-icons/react';
-import { clockHour, formatDay, formatDayClock, zoneLabel } from '../utils/time';
+import { clockHour, formatClock, formatDay, zoneLabel } from '../utils/time';
 import { LIKELY_PERCENT, formatRain, isWet, rainLevel } from '../utils/rain';
 import { CALM_KMH, compassPoint } from '../utils/wind';
 
@@ -98,7 +98,8 @@ export default function TimeBar({
 
   // a clock that is not the reader's own says which one it is
   const offset = zoneLabel(shownTime, zone);
-  const label = `${formatDayClock(shownTime, zone)}${offset && ` ${offset}`}`;
+  const clock = `${formatClock(shownTime, zone)}${offset && ` ${offset}`}`;
+  const label = `${formatDay(shownTime, zone)}, ${clock}`;
   const hoursFromNow = Math.round((selected - nowTime) / HOUR);
   const when = relativeLabel(hoursFromNow);
   const quoted = isNow && nowReading ? nowReading : current;
@@ -129,7 +130,11 @@ export default function TimeBar({
       </button>
 
       <div className="timebar-label">
-        <strong>{label}</strong>
+        {/* where there is little room the date gives way, and the clock stays */}
+        <strong>
+          <span className="timebar-date">{formatDay(shownTime, zone)},</span>{' '}
+          <span className="timebar-clock">{clock}</span>
+        </strong>
         <span aria-hidden="true">
           <span className="timebar-wide">
             {when}
@@ -137,7 +142,7 @@ export default function TimeBar({
             {wind && `: ${wind}`}
             {place && !rideStart && <span className="timebar-place"> at {place}</span>}
           </span>
-          <span className="timebar-narrow">{brief ? `${brief}, ${when}` : when}</span>
+          <span className="timebar-narrow">{brief ? `${brief}${isNow ? ', now' : ''}` : when}</span>
         </span>
         <span className="visually-hidden">{`${when}${spoken ? `: ${spoken}` : ''} ${where}`}</span>
         <div className="timebar-actions">
@@ -187,6 +192,15 @@ export default function TimeBar({
           }}
           onKeyDown={onKeyDown}
         >
+          {/* the best times to leave, as a short line under their bars; drawn first, so the dot of the
+              chosen hour stays on top of it */}
+          {bestSpans.map(([from, to]) => (
+            <span
+              key={from}
+              className="bars-best"
+              style={{ left: `${(from / hours.length) * 100}%`, width: `${((to - from + 1) / hours.length) * 100}%` }}
+            />
+          ))}
           {hours.map((h, i) => {
             const startsDay = i > 0 && days[i] !== days[i - 1];
             const empty = h.speed === null;
@@ -212,14 +226,6 @@ export default function TimeBar({
               </div>
             );
           })}
-          {/* the best times to leave, as a short line under their bars */}
-          {bestSpans.map(([from, to]) => (
-            <span
-              key={from}
-              className="bars-best"
-              style={{ left: `${(from / hours.length) * 100}%`, width: `${((to - from + 1) / hours.length) * 100}%` }}
-            />
-          ))}
         </div>
       )}
     </section>

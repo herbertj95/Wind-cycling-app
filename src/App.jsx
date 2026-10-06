@@ -318,7 +318,7 @@ export default function App() {
       east: Math.max(...lngs) + margin,
     };
   }, [route, routeLevel]);
-  const routeStamp = routeBounds ? wind.stamp(routeBounds) : '';
+  const routeStamp = useMemo(() => (routeBounds ? wind.stamp(routeBounds) : ''), [wind, routeBounds]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- routeStamp stands for what the scan reads
   const scanForecast = useMemo(() => forecastAlong, [routeStamp, routeLevel]);
   const hourly = useMemo(() => {
@@ -666,12 +666,9 @@ export default function App() {
     setFocus(toRider);
   };
 
-  // a best time to leave picked from the route panel: the plan is for the rider setting off then
+  // a best time to leave picked from the route panel: the plan is for then, and the readout is back on the rider
   const leaveAt = (time) => {
     selectHour(time);
-    rideRun.current++;
-    setRidePlaying(false);
-    setRiderIdx(0);
     setFocus(toRider);
   };
 

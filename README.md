@@ -130,7 +130,7 @@ The app icon is the W of Wind drawn as a route in the app's three wind colours. 
 1. **Read the wind**: the panel in the top left shows the wind for the selected place. Tap another place label, or any point on the map.
 2. **Go somewhere else**: open **Search** and type the name of a town (or a latitude and longitude), or just move the map. **Locate me** goes to where you are.
 3. **Keep a place**: the bookmark in the readout saves the point you are looking at to your places, and removes it again. Your places are listed under **Search**.
-4. **Pick a time**: drag the bar at the bottom. *Back to now* returns to the current hour. Times are local to the place; when that is not your own time zone, the offset is shown next to them.
+4. **Pick a time**: drag the bar at the bottom. *Back to now* (*Now* on a phone) returns to the current hour. Times are local to the place; when that is not your own time zone, the offset is shown next to them.
 5. **Load a route**: open **Routes** and open your own `.gpx` file, or choose one of the routes around Lisbon. You can also drop a file on the map.
 6. **Ride it**: move along the profile to see head, tail and crosswind at each kilometre. Set your average speed to match your ride.
 7. **Choose when to go**: tap one of the best times in the route panel to plan the ride for then, or pick any hour on the bar. *Reverse* turns the route round.
@@ -153,7 +153,7 @@ The route panel also says which part of the ride has the wind against you, when 
 
 ### Measured wind
 
-Where an IPMA station is within 30 km of the place in the readout, and the readout shows the present, the panel adds what that station measured in the last two hours and how it compares with the forecast for the same spot and hour: within 5 km/h is *as forecast*. Stations report every hour, with the wind as one of eight directions. It is shown for a place, a tapped point, your position, or the start of a route, never for a later time or a later point of the ride.
+Where an IPMA station is within 30 km of the place in the readout, and the readout shows the present, the panel adds what that station measured in the last two hours and how it compares with the forecast for the same spot and hour: within 5 km/h is *as forecast*. Stations report every hour, with the wind as one of eight directions. It is shown for a place, a tapped point, your position, or the start of a route (on a phone, the line about what the wind does to the rider takes its place there), never for a later time or a later point of the ride.
 
 ### Rain
 
