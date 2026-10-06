@@ -13,17 +13,20 @@ export const LIKELY_PERCENT = 30;
 // where light rain ends and where heavy rain starts, in mm an hour
 const MODERATE_MM = 2.5;
 const HEAVY_MM = 7.5;
+// An amount read between forecast points that all say 0.1 comes out as 0.09999999999999999 now and
+// then: the limits are met from a hair under them
+const HAIR = 1e-9;
 
 /** Whether that much rain in an hour gets a rider wet. An unknown amount does not count. */
-export const isWet = (mm) => mm >= WET_MM;
+export const isWet = (mm) => mm >= WET_MM - HAIR;
 
 /**
  * How hard it rains: 'none', 'light', 'moderate' or 'heavy'.
  */
 export function rainLevel(mm) {
   if (!isWet(mm)) return 'none';
-  if (mm < MODERATE_MM) return 'light';
-  return mm < HEAVY_MM ? 'moderate' : 'heavy';
+  if (mm < MODERATE_MM - HAIR) return 'light';
+  return mm < HEAVY_MM - HAIR ? 'moderate' : 'heavy';
 }
 
 /**

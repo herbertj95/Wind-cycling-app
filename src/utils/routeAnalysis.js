@@ -128,37 +128,44 @@ export function routeTurn(route) {
 
 /**
  * Whether a route comes home by the road it went out on: then riding it the other way round is the
- * same ride. Most of its first half has to be within 150 m of its second half.
+ * same ride. Most of its first half has to be within 150 m of its second half, ridden the other way:
+ * laps of a circuit pass the same places too, but always in the same direction.
  */
 export function retracesItself(route) {
   const pts = route.points;
   const total = route.totalDistance;
   if (!(total > 0) || pts.length < 2) return false;
-  const first = pts.findIndex((p) => p.distance >= total / 2);
-  const home = pts.slice(Math.max(0, first - 1));
+  const half = total / 2;
+  // the way home starts at half the distance itself, also on a route with no point near there
+  const home = [positionAt(pts, half), ...pts.filter((p) => p.distance > half)];
+  const step = half / SAME_ROAD_SAMPLES;
   let close = 0;
   for (let i = 0; i < SAME_ROAD_SAMPLES; i++) {
-    const out = positionAt(pts, (total / 2) * (i / SAME_ROAD_SAMPLES));
-    if (nearPath(out, home, SAME_ROAD_KM)) close++;
+    if (comesBackBy(positionAt(pts, step * i), positionAt(pts, step * (i + 1)), home, SAME_ROAD_KM)) close++;
   }
   return close >= SAME_ROAD_SAMPLES * SAME_ROAD_SHARE;
 }
 
-// Whether a position is within `km` of a line through some points, on a flat map around the position:
-// at the few hundred metres asked about, the earth is flat enough.
-function nearPath(at, path, km) {
+// Whether a line through some points passes within `km` of a position while running against the way the
+// rider is heading there, which is towards `ahead`. On a flat map around the position: at the few
+// hundred metres asked about, the earth is flat enough.
+function comesBackBy(at, ahead, path, km) {
   const kmPerLng = KM_PER_DEGREE * Math.cos((at.lat * Math.PI) / 180);
-  const flat = (p) => [(p.lng - at.lng) * kmPerLng, (p.lat - at.lat) * KM_PER_DEGREE];
+  // (longitudes are compared the short way round, for a route across the date line)
+  const flat = (p) => [((((p.lng - at.lng) % 360) + 540) % 360 - 180) * kmPerLng, (p.lat - at.lat) * KM_PER_DEGREE];
+  const [hx, hy] = flat(ahead);
   let [ax, ay] = flat(path[0]);
-  if (Math.hypot(ax, ay) <= km) return true;
   for (let i = 1; i < path.length; i++) {
     const [bx, by] = flat(path[i]);
     const dx = bx - ax;
     const dy = by - ay;
     const length = dx * dx + dy * dy;
-    // the nearest point of the segment to the position, which is at 0, 0
-    const t = length > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / length)) : 0;
-    if (Math.hypot(ax + t * dx, ay + t * dy) <= km) return true;
+    // only a stretch ridden the other way counts
+    if (length > 0 && dx * hx + dy * hy < 0) {
+      // the nearest point of the stretch to the position, which is at 0, 0
+      const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / length));
+      if (Math.hypot(ax + t * dx, ay + t * dy) <= km) return true;
+    }
     ax = bx;
     ay = by;
   }
@@ -451,8 +458,10 @@ export function scanDepartures(route, forecast, starts, rideKmh = 25) {
  *   that tells days apart), `past` (it can no longer be chosen) and `dark` (see darkChecks: 0 for a
  *   ride in the light from start to finish)
  * - days: the days to look at, in order
- * Only rides in the light from start to finish are offered. When no ride of the whole scan fits in the
- * light on any of the days (a route too long for the day), each day offers those with the least of the dark instead.
+ * Only rides in the light from start to finish are offered. When no ride that is still to come fits in
+ * the light on any of the days (a route too long for the day), each day offers those with the least of
+ * the dark instead. A ride in the light that cannot be judged, for want of a forecast, does not bring
+ * that about: its day is then left without a best time.
  * `windows` holds a window for each day that has one, in the order of `days`: { day, from, to, best,
  * any }. `best` is the easiest ride of the day (the earlier one wins a tie), and `from` and `to` the
  * first and the last of the hours in a row around it that are within 1.5 of its score. `any` says the
@@ -461,7 +470,7 @@ export function scanDepartures(route, forecast, starts, rideKmh = 25) {
  */
 export function bestWindows(departures, days) {
   const open = (d) => d.known && !d.late && !d.past && Number.isFinite(d.score);
-  const lit = departures.some((d) => days.includes(d.day) && open(d) && d.dark === 0);
+  const lit = departures.some((d) => days.includes(d.day) && !d.past && d.dark === 0);
   const windows = [];
   const unlit = [];
   for (const day of days) {

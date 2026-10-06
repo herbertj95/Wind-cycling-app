@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEVICE_ZONE, clockHour, formatClock, formatDay, formatDayClock, formatDuration, hourStart, validZone, zoneLabel, zoneOffset } from './time';
+import { DEVICE_ZONE, clockHour, markedHours, formatClock, formatDay, formatDayClock, formatDuration, hourStart, validZone, zoneLabel, zoneOffset } from './time';
 
 // Saturday 3 October 2026, 18:42:10 UTC. Lisbon is on summer time (UTC+1), Madrid on UTC+2.
 const MOMENT = Date.UTC(2026, 9, 3, 18, 42, 10) / 1000;
@@ -191,6 +191,31 @@ describe('clockHour', () => {
     expect(clockHour(Date.UTC(2026, 9, 25, 0, 30) / 1000, 'Europe/Lisbon')).toBe(1);
     expect(clockHour(Date.UTC(2026, 9, 25, 1, 30) / 1000, 'Europe/Lisbon')).toBe(1);
     expect(clockHour(Date.UTC(2026, 9, 25, 2, 30) / 1000, 'Europe/Lisbon')).toBe(2);
+  });
+});
+
+describe('markedHours', () => {
+  const run = (from, count) => Array.from({ length: count }, (_, i) => (from + i) % 24);
+  const marks = (hours, every) => markedHours(hours, every).map((on, i) => (on ? hours[i] : null)).filter((h) => h !== null);
+
+  it('marks the hours of the clock that are a multiple of the spacing', () => {
+    expect(marks(run(7, 20), 3)).toEqual([9, 12, 15, 18, 21, 0]);
+    expect(marks(run(22, 8), 2)).toEqual([22, 0, 2, 4]);
+    expect(marks(run(5, 6), 1)).toEqual([5, 6, 7, 8, 9, 10]);
+  });
+
+  it('keeps the marks that far apart on the night the clocks go forward', () => {
+    // Lisbon, the last Sunday of March: after 00:59 comes 02:00
+    const spring = [21, 22, 23, 0, 2, 3, 4, 5, 6, 7, 8];
+    expect(marks(spring, 2)).toEqual([22, 0, 4, 6, 8]);
+    expect(marks(spring, 3)).toEqual([21, 0, 6]);
+    // and on the night they go back, when 01:00 comes twice
+    const autumn = [22, 23, 0, 1, 1, 2, 3, 4, 5, 6];
+    expect(marks(autumn, 2)).toEqual([22, 0, 2, 4, 6]);
+  });
+
+  it('marks nothing without a spacing', () => {
+    expect(markedHours(run(0, 5), 0)).toEqual([false, false, false, false, false]);
   });
 });
 

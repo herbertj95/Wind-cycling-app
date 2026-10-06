@@ -220,6 +220,14 @@ describe('saveObservations and loadObservations', () => {
     expect(loadObservations(storage)).toBeNull();
   });
 
+  it('takes a copy dated after now for an old one, so the next download is not held back', () => {
+    const storage = memory();
+    // kept while the clock of the device was a day ahead
+    saveObservations([station], 1790985600000 + 86400000, storage);
+    expect(loadObservations(storage, 1790985600000)).toEqual({ stations: [station], at: 0 });
+    expect(loadObservations(storage, 1790985600000 + 86400000)).toEqual({ stations: [station], at: 1790985600000 + 86400000 });
+  });
+
   it('drops a kept station that is not whole', () => {
     const storage = memory();
     saveObservations([station, { ...station, speed: null }, { ...station, from: 'NW' }], 5, storage);

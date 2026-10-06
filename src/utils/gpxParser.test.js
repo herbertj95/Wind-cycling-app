@@ -892,4 +892,21 @@ describe('positionAt', () => {
     expect(positionAt(points, -3)).toMatchObject({ lat: 38, lng: -9 });
     expect(positionAt(points, 99)).toMatchObject({ lat: 38.1, lng: -8.8 });
   });
+
+  it('goes the short way round between two points either side of the date line', () => {
+    // Taveuni, Fiji: from 179.9 east to 179.9 west is 0.2 degrees, not 359.8
+    const across = [
+      { lat: -16.8, lng: 179.9, distance: 0 },
+      { lat: -16.8, lng: -179.9, distance: 20 },
+    ];
+    expect(positionAt(across, 5)).toEqual({ lat: expect.closeTo(-16.8, 9), lng: expect.closeTo(179.95, 9) });
+    expect(positionAt(across, 15)).toEqual({ lat: expect.closeTo(-16.8, 9), lng: expect.closeTo(-179.95, 9) });
+    // and the same ridden the other way
+    const back = [
+      { lat: -16.8, lng: -179.9, distance: 0 },
+      { lat: -16.8, lng: 179.9, distance: 20 },
+    ];
+    expect(positionAt(back, 5).lng).toBeCloseTo(-179.95, 9);
+    expect(positionAt(back, 15).lng).toBeCloseTo(179.95, 9);
+  });
 });

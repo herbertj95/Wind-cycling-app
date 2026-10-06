@@ -814,6 +814,9 @@
 }
 
 .route-actions {
+  /* above the touch area of Reverse, which reaches up beside them on a phone */
+  position: relative;
+  z-index: 2;
   display: flex;
   flex: none;
   align-items: center;
@@ -1657,13 +1660,27 @@
     min-width: 0;
   }
 
+  /* where the line is short, the hint of the button gives way before the distance and "reversed" do */
   .route-flip {
     order: -1;
+    flex: 0 100 auto;
+    min-width: 0;
     font-size: 12px;
   }
 
+  .route-flip svg,
+  .route-flip span {
+    flex: none;
+  }
+
+  .route-flip small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .route-meta {
-    flex: 1 1 0;
+    flex: 1 1 auto;
     font-size: 12px;
   }
 
@@ -1805,12 +1822,15 @@
     display: block;
   }
 
-  .timebar-bars {
-    height: 40px;
+  .timebar-bars,
+  .dock:has(.route-panel) .timebar-bars {
+    height: 52px;
   }
 
-  .dock:has(.route-panel) .timebar-bars {
-    height: 51px;
+  /* beside the buttons there is only room for the sign of Reverse */
+  .route-flip span,
+  .route-flip small {
+    display: none;
   }
 
   /* the station is named by its distance and the source, as on a phone */
@@ -1820,6 +1840,33 @@
   }
 
   .measured-narrow {
+    display: inline;
+  }
+}
+
+/* Windows of middling height (a laptop, a browser window that is not maximised): with a route open, the
+   readout and the dock no longer fit one above the other, and the dock would lie over the foot of the
+   readout. Where the window is wide enough for the profile to stay beside the summary, the dock starts
+   to the right of the readout instead. */
+@media (min-width: 1250px) and (min-height: 601px) and (max-height: 840px) {
+  .dock:has(.route-panel) {
+    left: calc(292px + 2 * var(--gap) + env(safe-area-inset-left));
+  }
+}
+
+/* Where it is not that wide, the readout leaves out its hint and names the station as a phone does. */
+@media (min-width: 721px) and (max-width: 1249px) and (min-height: 601px) and (max-height: 840px) {
+  .app:has(.route-panel) .readout-hint,
+  .app:has(.route-panel) .measured-wide {
+    display: none;
+  }
+
+  .app:has(.route-panel) .readout-measured small {
+    display: inline;
+    margin: 0;
+  }
+
+  .app:has(.route-panel) .measured-narrow {
     display: inline;
   }
 }
@@ -1846,10 +1893,11 @@
     height: 44px;
   }
 
-  /* as tall as a finger without making its line taller */
+  /* Taller for a finger without making its line taller: upwards beside the name of the route, and
+     downwards only as far as the gap to what comes next, which can be the strip that is dragged along. */
   .route-flip {
-    padding: 14px 8px;
-    margin: -14px -8px;
+    padding: 14px 8px 7px;
+    margin: -14px -8px -7px;
   }
 
   .route-plan select {

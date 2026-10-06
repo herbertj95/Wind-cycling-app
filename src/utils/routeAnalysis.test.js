@@ -899,6 +899,46 @@ describe('routeTurn', () => {
     expect(routeTurn(northbound())).toEqual({ returns: false, km: expect.closeTo(25, 9) });
   });
 
+  it('turns a loop where it is farthest from the start, also when that is not half way round', () => {
+    // a rectangle of 4 by 12 km started 4 km along one long side: 4 km east, 4 south, 12 west, 4 north
+    // and 8 east. The far corner comes after 20 of the 32 km.
+    const route = makeRoute(start, [
+      { bearing: 90, km: 4, steps: 4 },
+      { bearing: 180, km: 4, steps: 4 },
+      { bearing: 270, km: 12, steps: 12 },
+      { bearing: 0, km: 4, steps: 4 },
+      { bearing: 90, km: 8, steps: 8 },
+    ]);
+    expect(routeTurn(route)).toEqual({ returns: true, km: expect.closeTo(20, 6) });
+  });
+
+  it('has no turn for a loop whose farthest point comes after 70% of the way', () => {
+    // a winding way out (8 km east, 3 north, 8 west, 3 north, 8 east, 3 north: 33 km) and 12 km straight home
+    const home = (Math.atan2(-8, -9) * 180) / Math.PI + 360;
+    const route = makeRoute(start, [
+      { bearing: 90, km: 8, steps: 8 },
+      { bearing: 0, km: 3, steps: 3 },
+      { bearing: 270, km: 8, steps: 8 },
+      { bearing: 0, km: 3, steps: 3 },
+      { bearing: 90, km: 8, steps: 8 },
+      { bearing: 0, km: 3, steps: 3 },
+      { bearing: home, km: Math.hypot(8, 9), steps: 12 },
+    ]);
+    expect(routeTurn(route)).toEqual({ returns: true, km: null });
+  });
+
+  it('has no turn for laps whose farthest point would do for one', () => {
+    // 3 km out and back, then 10 km out and back another way: the far end is 16 km into the 26, but the
+    // route is back at its start after 6
+    const route = makeRoute(start, [
+      { bearing: 0, km: 3, steps: 3 },
+      { bearing: 180, km: 3, steps: 3 },
+      { bearing: 90, km: 10, steps: 10 },
+      { bearing: 270, km: 10, steps: 10 },
+    ]);
+    expect(routeTurn(route)).toEqual({ returns: true, km: null });
+  });
+
   it('has no turn for a route that comes back with its farthest point near one end', () => {
     // 5 km out and back, then 8 km east: it finishes 8 km from the start, the farthest point is 8 km
     // away at the very end
@@ -952,6 +992,22 @@ describe('retracesItself', () => {
     // out and home on a road a kilometre away from the first one
     const parallel = makeRoute(start, [{ bearing: 0, km: 15, steps: 15 }, { bearing: 90, km: 1, steps: 1 }, { bearing: 180, km: 15, steps: 15 }, { bearing: 270, km: 1, steps: 1 }]);
     expect(retracesItself(parallel)).toBe(false);
+  });
+
+  it('does not take laps of a circuit for one: they pass the same places, but the same way round', () => {
+    // laps of a square of 5 km a side, always north first
+    const lap = [0, 90, 180, 270].map((bearing) => ({ bearing, km: 5, steps: 10 }));
+    expect(retracesItself(makeRoute(start, [...lap, ...lap]))).toBe(false);
+    expect(retracesItself(makeRoute(start, [...lap, ...lap, ...lap]))).toBe(false);
+  });
+
+  it('judges a route of a few points by its two halves, not by the stretch that spans them', () => {
+    // a planned route of two points, one way: there is no way home in it
+    expect(retracesItself(makeRoute(start, [{ bearing: 90, km: 34.7, steps: 1 }]))).toBe(false);
+    // three points, north and then east
+    expect(retracesItself(makeRoute(start, [{ bearing: 0, km: 28, steps: 1 }, { bearing: 90, km: 13, steps: 1 }]))).toBe(false);
+    // and three points out and back by the same road
+    expect(retracesItself(makeRoute(start, [{ bearing: 0, km: 15, steps: 1 }, { bearing: 180, km: 15, steps: 1 }]))).toBe(true);
   });
 
   it('is the same ride either way round', () => {
@@ -1198,6 +1254,46 @@ describe('analyseRoute score', () => {
     expect(analyseRoute(northbound(), hours(wet, wet, wet, wet), 0, 25).rain.wet).toBe(true);
     expect(analyseRoute(northbound(), hours(crosswind(), crosswind(), crosswind(), crosswind()), 0, 25).rain.wet).toBe(false);
   });
+
+  it('does not call a ride wet for a few hundred metres of rain', () => {
+    // 50 km with a point every 250 m, and a forecast that is wet only between two distances from the start
+    const route = makeRoute({ lat: 38.45, lng: -9.2 }, [{ bearing: 0, km: 50, steps: 200 }]);
+    const shower = (fromKm, toKm) => ({
+      sample: (lat) => {
+        const km = (lat - 38.45) * KM_PER_DEGREE;
+        return { speed: 10, gust: 12, from: 90, temp: 18, feels: 17, rain: km > fromKm && km < toKm ? 1.2 : 0, rainChance: 80, late: false };
+      },
+    });
+    // one point in the rain is 250 m of road, three are 750 m: a ride is wet from half a kilometre
+    const brief = analyseRoute(route, shower(19.9, 20.1), 0, 25);
+    expect(brief.rain.wetKm).toBeCloseTo(0.25, 6);
+    expect(brief.rain.wet).toBe(false);
+    const longer = analyseRoute(route, shower(19.9, 20.6), 0, 25);
+    expect(longer.rain.wetKm).toBeCloseTo(0.75, 6);
+    expect(longer.rain.wet).toBe(true);
+  });
+
+  it('keeps the wind score to the wind: rain and gusts only weigh on the score', () => {
+    const fair = analyseRoute(northbound(), northerly(), 0, 25);
+    // the same wind with gusts of 55 and moderate rain all the way
+    const foul = analyseRoute(northbound(), everywhere(Array.from({ length: 4 }, () => ({ speed: 20, dir: 0, gust: 55, rain: 3, rainChance: 80 }))), 0, 25);
+    expect(fair.score).toBeCloseTo(fair.windScore, 9);
+    expect(foul.windScore).toBeCloseTo(fair.windScore, 9);
+    // 15 * 0.8 * 1.5 for the rain, and 20 * 0.75 for gusts three quarters of the way up their ramp
+    expect(foul.score).toBeCloseTo(foul.windScore + 18 + 15, 6);
+  });
+
+  it('averages over the part of the route that has a forecast', () => {
+    // 11 steps north across the edge of the forecast: only the first five have wind
+    const step = 0.01 * KM_PER_DEGREE;
+    const route = makeRoute({ lat: 38.945, lng: -9.2 }, [{ bearing: 0, km: 11 * step, steps: 11 }]);
+    const result = analyseRoute(route, northerly(), 0, 25);
+    expect(result.outsideKm).toBeCloseTo(6 * step, 6);
+    // into 20 km/h on every kilometre that has a forecast
+    expect(result.windScore).toBeCloseTo(28, 6);
+    expect(result.score).toBeCloseTo(28, 6);
+    expect(result.against).toBeCloseTo(20, 6);
+  });
 });
 
 describe('scanDepartures', () => {
@@ -1254,6 +1350,22 @@ describe('scanDepartures', () => {
     const elsewhere = makeRoute({ lat: 45, lng: 3 }, [{ bearing: 0, km: 20, steps: 20 }]);
     const [lost] = scanDepartures(elsewhere, building(), [0], 25);
     expect(lost.known).toBe(false);
+  });
+
+  it('sees the end of a long ride on the lighter copy of the route it reads', () => {
+    // 50 km with a point every 50 m, and 5 hours of forecast. Leaving at hour 2 the ride ends on the
+    // last hour; leaving a minute later, only its last metres come after it.
+    const route = makeRoute({ lat: 38.45, lng: -9.2 }, [{ bearing: 0, km: 50, steps: 1000 }]);
+    const scan = scanDepartures(route, building(), [2, 2 + 1 / 60], 25);
+    expect(scan.map((d) => d.late)).toEqual([false, true]);
+  });
+
+  it('draws the line for judging a ride at 5% of the route without a forecast', () => {
+    // 50 km north with a point every 500 m, across the north edge of the forecast at 39 degrees: the
+    // last 2 km (4%) beyond it, or the last 3 km (6%)
+    const upTo = (insideKm) => makeRoute({ lat: 39 - (insideKm + 0.25) / KM_PER_DEGREE, lng: -9.2 }, [{ bearing: 0, km: 50, steps: 100 }]);
+    expect(scanDepartures(upTo(48), building(), [0], 25)[0].known).toBe(true);
+    expect(scanDepartures(upTo(47), building(), [0], 25)[0].known).toBe(false);
   });
 
   it('needs a forecast for 95% of the route before it judges a ride', () => {
@@ -1357,6 +1469,23 @@ describe('bestWindows', () => {
     expect(bestWindows(scan([4, 4.5, 5, 4], { 3: { late: true } }), ['day 0']).windows[0].any).toBe(false);
     // and the rides with the least of the dark are never any time
     expect(bestWindows(scan([4, 4.5, 5], { 0: { dark: 1 }, 1: { dark: 1 }, 2: { dark: 1 } }), ['day 0']).windows[0].any).toBe(false);
+  });
+
+  it('says any time of a day the way the app scans it: with hours gone by, and another day after it', () => {
+    // day 0: two hours gone by, four close ones in the light, the rest in the dark; day 1 has one best hour
+    const rides = scan(Array.from({ length: 24 }, (_, i) => (i === 20 ? 2 : i > 18 ? 9 : 4)))
+      .map((d, i) => ({ ...d, past: i < 2, dark: i >= 6 && i < 18 ? 1 : 0 }));
+    const { windows } = bestWindows(rides, ['day 0', 'day 1']);
+    expect(windows.map((w) => [w.day, w.any])).toEqual([['day 0', true], ['day 1', false]]);
+    expect(windows[0]).toMatchObject({ from: at(8), to: at(11) });
+  });
+
+  it('does not offer the night for want of a forecast for the day', () => {
+    // tonight's rides are all in the dark; tomorrow's are in the light, but the forecast ends before them
+    const rides = scan(Array.from({ length: 30 }, () => 4)).map((d, i) => (i < 18 ? { ...d, dark: 2 } : { ...d, late: true }));
+    const { windows, unlit } = bestWindows(rides, ['day 0', 'day 1']);
+    expect(windows).toEqual([]);
+    expect(unlit).toEqual(['day 0']);
   });
 
   it('only looks at the days asked for to tell whether any ride fits in the light', () => {

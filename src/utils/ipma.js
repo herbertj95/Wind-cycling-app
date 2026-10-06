@@ -101,14 +101,16 @@ export function nearestStation(stations, lat, lng, maxKm = STATION_RANGE_KM) {
 
 /**
  * The last download kept on the device: { stations, at } with `at` when it was downloaded (ms), or null
- * when nothing usable is kept.
+ * when nothing usable is kept. `now` is the present in ms.
  */
-export function loadObservations(storage = deviceStorage) {
+export function loadObservations(storage = deviceStorage, now = Date.now()) {
   try {
     const saved = JSON.parse(storage.getItem(STORAGE_KEY));
     if (!Number.isFinite(saved?.at) || !Array.isArray(saved.stations)) return null;
     const valid = (s) => s && typeof s.name === 'string' && [s.lat, s.lng, s.time, s.speed].every(Number.isFinite) && (s.from === null || Number.isFinite(s.from));
-    return { stations: saved.stations.filter(valid), at: saved.at };
+    // A copy dated after now was kept while the clock of the device was ahead. It counts as old, so
+    // that it is downloaded again instead of standing in the way until that moment comes.
+    return { stations: saved.stations.filter(valid), at: saved.at <= now ? saved.at : 0 };
   } catch {
     return null;
   }

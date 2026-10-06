@@ -210,7 +210,7 @@ export default function RoutePanel({
                         </span>
                       ))}
                       {bestTimes.length > 0 && noLightToday && '. '}
-                      {noLightToday && 'Not enough daylight left today.'}
+                      {noLightToday && 'Not enough daylight today.'}
                     </span>
                   </p>
                 )}

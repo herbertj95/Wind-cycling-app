@@ -266,7 +266,12 @@ export function positionAt(points, km) {
   const a = points[lo];
   const b = points[hi];
   const t = (km - a.distance) / (b.distance - a.distance);
-  return { lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t };
+  // the short way round: from 179.9 to -179.9 is a fifth of a degree, not a trip round the world
+  let turn = b.lng - a.lng;
+  if (turn > 180) turn -= 360;
+  else if (turn < -180) turn += 360;
+  const lng = a.lng + turn * t;
+  return { lat: a.lat + (b.lat - a.lat) * t, lng: lng > 180 ? lng - 360 : lng < -180 ? lng + 360 : lng };
 }
 
 /**

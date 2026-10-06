@@ -10,6 +10,13 @@ describe('isWet', () => {
     expect(isWet(3)).toBe(true);
   });
 
+  it('still counts a tenth that arithmetic has left a hair short', () => {
+    // 0.1 read between four forecast points that all say 0.1
+    expect(isWet(0.1 * 0.3 + 0.1 * 0.2 + 0.1 * 0.4 + 0.1 * 0.1)).toBe(true);
+    expect(isWet(0.09999999999999999)).toBe(true);
+    expect(isWet(0.0999)).toBe(false);
+  });
+
   it('does not count an amount the forecast does not give', () => {
     expect(isWet(NaN)).toBe(false);
     expect(isWet(undefined)).toBe(false);
@@ -27,6 +34,14 @@ describe('rainLevel', () => {
     expect(rainLevel(7.4)).toBe('moderate');
     expect(rainLevel(7.5)).toBe('heavy');
     expect(rainLevel(30)).toBe('heavy');
+  });
+
+  it('puts an amount that is a hair short of a limit on the far side of it', () => {
+    expect(rainLevel(0.09999999999999999)).toBe('light');
+    expect(rainLevel(2.4999999999999996)).toBe('moderate');
+    expect(rainLevel(7.499999999999999)).toBe('heavy');
+    expect(rainLevel(2.499)).toBe('light');
+    expect(rainLevel(7.499)).toBe('moderate');
   });
 
   it('is none for an unknown amount', () => {

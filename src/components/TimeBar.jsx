@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CaretDown, CaretUp, Pause, Play } from '@phosphor-icons/react';
-import { clockHour, formatClock, formatDay, zoneLabel } from '../utils/time';
+import { clockHour, formatClock, formatDay, markedHours, zoneLabel } from '../utils/time';
 import { LIKELY_PERCENT, formatRain, isWet, rainLevel } from '../utils/rain';
 import { CALM_KMH, compassPoint } from '../utils/wind';
 
@@ -80,6 +80,7 @@ export default function TimeBar({
   // arrows on the hours of the clock that are a multiple of `every`, so they stay put as time passes
   const slot = barsWidth / hours.length;
   const every = slot > 0 ? ARROW_EVERY.find((n) => n * slot >= ARROW_GAP_PX) ?? 24 : 0;
+  const arrows = markedHours(clockHours, every);
 
   const pick = (clientX) => {
     const rect = barsRef.current.getBoundingClientRect();
@@ -207,7 +208,7 @@ export default function TimeBar({
             const classes = ['bar', h.time === selected && 'selected', h.time < nowTime && 'past', startsDay && 'day', empty && 'empty']
               .filter(Boolean)
               .join(' ');
-            const arrow = every > 0 && clockHours[i] % every === 0 && !empty;
+            const arrow = arrows[i] && !empty;
             return (
               <div key={h.time} className={classes} data-day={startsDay ? days[i] : undefined}>
                 {arrow && (h.speed >= CALM_KMH ? (
