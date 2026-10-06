@@ -459,8 +459,11 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, vie
       redrawGlyphs();
     },
 
-    /** Draws a route (see parseGpxData) and fits the view to it; null removes it. */
-    setRoute(nextRoute) {
+    /**
+     * Draws a route (see parseGpxData) and fits the view to it; null removes it.
+     * - fit: false leaves the view where it is, for a route that is on the map already (turned round)
+     */
+    setRoute(nextRoute, { fit = true } = {}) {
       removeRoute();
       route = nextRoute;
       routeLine = route ? continuous(route.parts) : [];
@@ -483,6 +486,7 @@ export function createWindMap(container, { theme: initialTheme, flowEnabled, vie
         badge('Start', first);
         badge('Finish', last);
       }
+      if (!fit) return;
 
       let south = 90;
       let north = -90;

@@ -340,6 +340,62 @@
   display: none;
 }
 
+/* shown only when rain is on the way */
+.readout-rain {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.readout-rain svg,
+.readout-wet svg {
+  flex: none;
+  color: var(--rain);
+}
+
+/* what a weather station nearby measured, with the place it stands in smaller type under it */
+.readout-measured {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.readout-measured svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-2);
+}
+
+.readout-measured b {
+  font-weight: 600;
+}
+
+.measured-narrow {
+  display: none;
+}
+
+.readout-measured small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.readout-wet {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
 .readout-stats {
   display: grid;
   grid-template-columns: repeat(3, auto);
@@ -690,6 +746,12 @@
   height: 8px;
 }
 
+.route-peaks-rain svg {
+  flex: none;
+  margin: 0 -1px;
+  color: var(--rain);
+}
+
 .route-body {
   margin-top: 6px;
 }
@@ -718,7 +780,43 @@
   text-overflow: ellipsis;
 }
 
+/* the distance and the button that turns the route round; on a phone they get a line of their own */
+.route-sub {
+  display: contents;
+}
+
+/* turns the route round; says so when the other way is clearly easier */
+.route-flip {
+  /* above the line under it, which its enlarged touch area reaches into */
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.route-flip span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.route-flip small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
 .route-actions {
+  /* above the touch area of Reverse, which reaches up beside them on a phone */
+  position: relative;
+  z-index: 2;
   display: flex;
   flex: none;
   align-items: center;
@@ -745,6 +843,49 @@
 .route-plan select option {
   background: var(--page);
   color: var(--ink);
+}
+
+/* the best time to leave on each of the coming days, each a button that picks it; one line that does not wrap.
+   Above what comes after it: on a touch screen its buttons reach down over the coloured bar. */
+.route-best {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.route-best svg {
+  flex: none;
+  align-self: center;
+  color: var(--ink);
+}
+
+.route-best > span {
+  min-width: 0;
+  /* room for the focus ring of the buttons, which the clipping of the line would cut off; only the
+     buttons take taps, not that room around them */
+  padding: 4px;
+  margin: -4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.route-best .text-button {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+/* the one the plan is for */
+.route-best .text-button[aria-pressed='true'] {
+  text-decoration: none;
 }
 
 .share-bar {
@@ -808,6 +949,19 @@
 .route-advice b {
   font-weight: 600;
   color: var(--ink);
+}
+
+/* which part of the ride has the wind against it */
+.advice-order {
+  color: var(--ink);
+}
+
+.route-rain {
+  margin-top: 4px;
+}
+
+.route-advice.route-rain svg {
+  color: var(--rain);
 }
 
 .route-point {
@@ -919,7 +1073,7 @@
   white-space: nowrap;
 }
 
-.timebar-label span {
+.timebar-label > span {
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
@@ -939,6 +1093,11 @@
 .timebar-label .text-button {
   font-size: 13px;
   white-space: nowrap;
+}
+
+/* the label in full on a wide screen; on a phone the numbers come first, so they are what stays */
+.timebar-narrow {
+  display: none;
 }
 
 /* the fold button sits in the label row without making it taller */
@@ -963,13 +1122,15 @@
   align-items: center;
 }
 
+/* the bars, with a row above them for the wind arrows and, under them, a thin one for the marks (the
+   chosen hour, the best time to leave) and one for the hours of the clock and the dates */
 .timebar-bars {
   position: relative;
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 58px;
-  padding-bottom: 14px;
+  height: 64px;
+  padding: 12px 0 20px;
   border-radius: 4px;
   cursor: pointer;
   touch-action: none;
@@ -1000,6 +1161,74 @@
 
 .bar.past .speed {
   opacity: 0.45;
+}
+
+/* an hour with rain stands on a teal foot, taller the harder it rains */
+.bar .rain {
+  height: 3px;
+  border-radius: 0;
+  background: var(--rain);
+}
+
+.bar .rain.moderate {
+  height: 6px;
+}
+
+.bar .rain.heavy {
+  height: 10px;
+}
+
+/* rain that few runs of the forecast agree on, and rain that is over */
+.bar .rain.unlikely,
+.bar.past .rain {
+  opacity: 0.45;
+}
+
+/* Which way the wind blows, over the bar of that hour; a dot for still air. Wider than a bar on a
+   phone, so they are only drawn every few hours. */
+.bar-wind {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  margin: 0 0 1px -5.5px;
+  color: var(--ink-3);
+}
+
+.bar-calm {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.bar.past .bar-wind,
+.bar.past .bar-calm {
+  opacity: 0.45;
+}
+
+.bar.selected .bar-wind {
+  color: var(--ink-2);
+}
+
+/* the best time to leave on a day, as a short line in the row of dates, just under its bars */
+.bars-best {
+  position: absolute;
+  bottom: 15px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink-2);
+  pointer-events: none;
+}
+
+/* with a route there is a little more room for the bars of its start */
+.dock:has(.route-panel) .timebar-bars {
+  height: 75px;
 }
 
 /* an hour whose wind is not loaded keeps its place as a faint mark */
@@ -1049,17 +1278,38 @@
 .bar.day::before {
   content: attr(data-day);
   position: absolute;
-  bottom: -15px;
+  bottom: -21px;
   left: 0;
   display: flex;
   align-items: flex-end;
-  height: 100%;
+  height: calc(100% + 6px);
   padding-left: 4px;
   border-left: 1px solid var(--hair);
   font-size: 12px;
   color: var(--ink-3);
   white-space: nowrap;
   pointer-events: none;
+}
+
+/* the hour of the clock under its bar, on the line of the dates */
+.bar-hour {
+  position: absolute;
+  bottom: -21px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--ink-3);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.bar.past .bar-hour {
+  opacity: 0.6;
+}
+
+.bar.selected .bar-hour {
+  color: var(--ink);
 }
 
 /* ---------- things drawn on the map ---------- */
@@ -1340,8 +1590,35 @@
     max-width: calc(100vw - 2 * var(--gap));
   }
 
-  .timebar-place {
+  .timebar-place,
+  .timebar-wide {
     display: none;
+  }
+
+  .timebar-narrow {
+    display: inline;
+  }
+
+  /* Where the line is short, the date gives way first, then the numbers; the clock always stays. The
+     date and the clock take their places in the line as if the strong around them were not there. */
+  .timebar-label {
+    gap: 6px;
+  }
+
+  .timebar-label strong {
+    display: contents;
+  }
+
+  .timebar-date {
+    flex: 0 1000 auto;
+    min-width: 0;
+    margin-right: -2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .timebar-clock {
+    flex: none;
   }
 
   .notice {
@@ -1395,10 +1672,43 @@
     font-size: 15px;
   }
 
-  .route-meta {
-    order: 3;
+  /* the second line starts with the button that turns the route round, and the distance follows */
+  .route-sub {
+    display: flex;
     flex-basis: 100%;
+    order: 3;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  /* where the line is short, the hint of the button gives way before the distance and "reversed" do */
+  .route-flip {
+    order: -1;
+    flex: 0 100 auto;
+    min-width: 0;
     font-size: 12px;
+  }
+
+  .route-flip svg,
+  .route-flip span {
+    flex: none;
+  }
+
+  .route-flip small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .route-meta {
+    flex: 1 1 auto;
+    font-size: 12px;
+  }
+
+  /* two days are as many as a phone has room for */
+  .best-time:nth-child(n + 3) {
+    display: none;
   }
 
   .route-actions .segmented,
@@ -1419,8 +1729,13 @@
     margin-top: 6px;
   }
 
-  .route-plan {
+  .route-plan,
+  .route-best {
     font-size: 12px;
+  }
+
+  .route-best {
+    margin-top: 2px;
   }
 
   .share-key {
@@ -1439,7 +1754,42 @@
   }
 
   .dock:has(.route-panel) .timebar-bars {
-    height: 46px;
+    height: 63px;
+  }
+
+  /* The measured wind takes the place of the note, on one line: how far the station is and whose it
+     is stay, its name is left to the wider screens. */
+  .readout-measured {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--hair);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .readout-measured > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .readout-measured svg {
+    margin-top: 0;
+  }
+
+  .readout-measured small {
+    display: inline;
+    margin: 0;
+  }
+
+  .measured-wide,
+  .readout-note.beside-measured,
+  .readout-measured.beside-rider {
+    display: none;
+  }
+
+  .measured-narrow {
+    display: inline;
   }
 }
 
@@ -1477,7 +1827,9 @@
   .readout-stats,
   .readout-note,
   .readout-hint,
+  .measured-wide,
   .route-plan,
+  .route-best,
   .share-key,
   .route-advice,
   .route-point {
@@ -1492,8 +1844,52 @@
     display: block;
   }
 
-  .timebar-bars {
-    height: 40px;
+  .timebar-bars,
+  .dock:has(.route-panel) .timebar-bars {
+    height: 58px;
+  }
+
+  /* beside the buttons there is only room for the sign of Reverse */
+  .route-flip span,
+  .route-flip small {
+    display: none;
+  }
+
+  /* the station is named by its distance and the source, as on a phone */
+  .readout-measured small {
+    display: inline;
+    margin: 0;
+  }
+
+  .measured-narrow {
+    display: inline;
+  }
+}
+
+/* Windows of middling height (a laptop, a browser window that is not maximised): with a route open, the
+   readout and the dock no longer fit one above the other, and the dock would lie over the foot of the
+   readout. Where the window is wide enough for the profile to stay beside the summary, the dock starts
+   to the right of the readout instead. */
+@media (min-width: 1250px) and (min-height: 601px) and (max-height: 840px) {
+  .dock:has(.route-panel) {
+    left: calc(292px + 2 * var(--gap) + env(safe-area-inset-left));
+  }
+}
+
+/* Where it is not that wide, the readout leaves out its hint and names the station as a phone does. */
+@media (min-width: 721px) and (max-width: 1249px) and (min-height: 601px) and (max-height: 840px) {
+  .app:has(.route-panel) .readout-hint,
+  .app:has(.route-panel) .measured-wide {
+    display: none;
+  }
+
+  .app:has(.route-panel) .readout-measured small {
+    display: inline;
+    margin: 0;
+  }
+
+  .app:has(.route-panel) .measured-narrow {
+    display: inline;
   }
 }
 
@@ -1519,9 +1915,23 @@
     height: 44px;
   }
 
+  /* Taller for a finger without making its line taller: upwards beside the name of the route, and
+     downwards only as far as the gap to what comes next, which can be the strip that is dragged along. */
+  .route-flip {
+    padding: 14px 8px 7px;
+    margin: -14px -8px -7px;
+  }
+
   .route-plan select {
     min-height: 40px;
     padding: 0 6px;
+  }
+
+  /* the times to leave grow downwards only: the line above them is the plan they change */
+  .route-best > span,
+  .route-best .text-button {
+    padding-bottom: 14px;
+    margin-bottom: -14px;
   }
 
   .timebar-label .text-button,

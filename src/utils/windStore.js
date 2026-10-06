@@ -1,6 +1,6 @@
 // The wind that has been downloaded: forecast points on the world lattice, asked for as the app needs them
 // (the place in focus, the route, the saved places, the map view) and kept while they are fresh.
-import { MAX_LEVEL, cellAt, finestIndex, nodeKey, nodePosition, stepOf } from './lattice';
+import { MAX_LEVEL, cellAt, finestIndex, inBounds, nodeKey, nodePosition, stepOf } from './lattice';
 import { pointAt, blendAt } from './windField';
 
 const MINUTE = 60000;
@@ -25,7 +25,7 @@ const SPENT_KEY = 'wind-spent-v1';
 // the single-area forecast that versions before the world lattice kept
 const OLD_STORAGE_KEY = 'wind-forecast-v2';
 // which need is served first when not everything can be asked for at once
-const ORDER = ['focus', 'route', 'places', 'view'];
+const ORDER = ['focus', 'route', 'station', 'places', 'view'];
 const ALL_LEVELS = Array.from({ length: MAX_LEVEL + 1 }, (_, level) => level);
 
 const deviceStorage = {
@@ -47,7 +47,7 @@ function retryDelay(problem, failures) {
 }
 
 // a point that came with no hours of wind: it is there, with nothing to read
-const emptied = (point) => ({ ...point, n: 0, speed: [], dir: [], gust: [], temp: [], feels: [] });
+const emptied = (point) => ({ ...point, n: 0, speed: [], dir: [], gust: [], temp: [], feels: [], rain: [], rainChance: [] });
 
 /**
  * - fetchPoints(positions): downloads forecast points (see weatherApi)
@@ -167,11 +167,13 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
       if (saved?.v !== 1 || !Array.isArray(saved.points)) return;
       for (const entry of saved.points) {
         if (!Array.isArray(entry)) continue;
-        const [level, row, col, t0, zone, fetchedAt, speed, dir, gust, temp, feels] = entry;
+        const [level, row, col, t0, zone, fetchedAt, speed, dir, gust, temp, feels, rain, rainChance] = entry;
         const series = [speed, dir, gust, temp, feels];
         if (!Number.isInteger(level) || level < 0 || level > MAX_LEVEL || !Number.isInteger(row) || !Number.isInteger(col)) continue;
         if (!Number.isFinite(t0) || !Number.isFinite(fetchedAt) || !series.every((s) => Array.isArray(s) && s.length === series[0].length)) continue;
         const point = { t0, n: speed.length, speed, dir, gust, temp, feels, zone: typeof zone === 'string' ? zone : null, fetchedAt };
+        // points saved before the app read the rain come without it: their wind is still good
+        if ([rain, rainChance].every((s) => Array.isArray(s) && s.length === speed.length)) Object.assign(point, { rain, rainChance });
         if (point.n === 0 || expired(point, t)) continue;
         put(nodeKey(level, row, col), { level, row, col }, point);
       }
@@ -194,7 +196,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     const rows = keys.slice(0, MAX_SAVED).map((key) => {
       const p = points.get(key);
       // the 0 is the lattice level the row and the column are counted on
-      return [0, p.row, p.col, p.t0, p.zone, p.fetchedAt, p.speed, p.dir, p.gust, p.temp, p.feels];
+      return [0, p.row, p.col, p.t0, p.zone, p.fetchedAt, p.speed, p.dir, p.gust, p.temp, p.feels, p.rain ?? null, p.rainChance ?? null];
     });
     for (const count of [rows.length, Math.min(rows.length, 60)]) {
       try {
@@ -437,6 +439,23 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
     },
 
     /**
+     * A short text that changes whenever a forecast point inside `bounds` arrives, is renewed or goes:
+     * what is worked out from the wind of that part of the world alone needs working out again only
+     * when it changes. `bounds` is { south, west, north, east } in degrees.
+     */
+    stamp(bounds) {
+      let count = 0;
+      let sum = 0;
+      for (const point of points.values()) {
+        const { lat, lng } = nodePosition(0, point.row, point.col);
+        if (!inBounds(bounds, lat, lng)) continue;
+        count++;
+        sum += point.fetchedAt;
+      }
+      return `${count}:${sum}`;
+    },
+
+    /**
      * How far a set of lattice points is: 'ready' when all are here, 'failed' when one could not be
      * downloaded and is not being tried right now, otherwise 'loading'.
      */
@@ -458,7 +477,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
   return {
     /**
      * Says which lattice points a part of the app needs ([{ level, row, col }]), replacing what it needed before.
-     * Names: 'focus', 'route', 'places', 'view'. `delay` (ms) waits before asking, for needs that change quickly.
+     * Names: 'focus', 'route', 'station', 'places', 'view'. `delay` (ms) waits before asking, for needs that change quickly.
      */
     want(name, nodes, delay = 0) {
       const wanted = new Map();
@@ -492,7 +511,7 @@ export function createWindStore({ fetchPoints, now = () => Date.now(), storage =
       return () => listeners.delete(listener);
     },
 
-    /** The wind as it is now: { sample, frame, zoneAt, state, problem, version }. */
+    /** The wind as it is now: { sample, frame, zoneAt, stamp, state, problem, version }. */
     getSnapshot: () => snapshot,
 
     destroy() {

@@ -136,6 +136,19 @@ function climbIn(points) {
 }
 
 /**
+ * The same track ridden the other way, for measuring: what was descent is climbing. A jump is marked on
+ * the point after it, which the other way round is the point that came before it.
+ */
+function backwards(points, total) {
+  return points.map((_, i) => {
+    const pt = points[points.length - 1 - i];
+    const turned = { ele: pt.ele, distance: total - pt.distance };
+    if (points[points.length - i]?.gap) turned.gap = true;
+    return turned;
+  });
+}
+
+/**
  * Keeps the first and last point, both sides of every gap, and otherwise one point per `spacing` km travelled.
  */
 function thinByDistance(items, spacing) {
@@ -153,7 +166,8 @@ function thinByDistance(items, spacing) {
  * - points: thinned trackpoints for analysis: { lat, lng, ele, distance (km ridden), bearing, pathKm, gap? }
  * - parts: the line to draw, as lists of [lng, lat], split where the recording jumps
  * - pathLength: km along that line, jumps included; a point's `pathKm` is where it sits on it
- * - totalDistance (km ridden), totalElevationGain (m)
+ * - totalDistance (km ridden), totalElevationGain (m) and totalElevationLoss (m), which is the climbing
+ *   of the same route ridden the other way
  */
 export function parseGpxData(gpxText, routeName = 'Imported Route') {
   const xmlDoc = new DOMParser().parseFromString(gpxText, 'text/xml');
@@ -200,8 +214,24 @@ export function parseGpxData(gpxText, routeName = 'Imported Route') {
     return kept;
   });
 
-  // Heading from the previous kept point to the next one, which smooths out GPS jitter.
-  // Neighbours on the far side of a gap are ignored.
+  setBearings(points);
+
+  return {
+    name: routeName,
+    points,
+    parts,
+    pathLength,
+    totalDistance: cumulativeDistance,
+    totalElevationGain: calculateElevationGain(raw),
+    totalElevationLoss: calculateElevationGain(backwards(raw, cumulativeDistance)),
+  };
+}
+
+/**
+ * Gives every point the heading ridden there: from the previous kept point to the next one, which
+ * smooths out GPS jitter. Neighbours on the far side of a gap are ignored.
+ */
+function setBearings(points) {
   points.forEach((pt, i) => {
     const before = i > 0 && !pt.gap ? points[i - 1] : pt;
     const after = i < points.length - 1 && !points[i + 1].gap ? points[i + 1] : pt;
@@ -216,14 +246,65 @@ export function parseGpxData(gpxText, routeName = 'Imported Route') {
   for (let i = points.length - 1; i >= 0; i--) {
     if (points[i].bearing === null) points[i].bearing = points[i + 1]?.bearing ?? 0;
   }
+}
+
+/**
+ * Where on a route the rider is after `km`: { lat, lng }, between the two points around it.
+ * - points: of a route from parseGpxData, in the order of their distance
+ */
+export function positionAt(points, km) {
+  const last = points.length - 1;
+  if (km <= points[0].distance) return points[0];
+  if (km >= points[last].distance) return points[last];
+  let lo = 0;
+  let hi = last;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].distance <= km) lo = mid;
+    else hi = mid;
+  }
+  const a = points[lo];
+  const b = points[hi];
+  const t = (km - a.distance) / (b.distance - a.distance);
+  // the short way round: from 179.9 to -179.9 is a fifth of a degree, not a trip round the world
+  let turn = b.lng - a.lng;
+  if (turn > 180) turn -= 360;
+  else if (turn < -180) turn += 360;
+  const lng = a.lng + turn * t;
+  return { lat: a.lat + (b.lat - a.lat) * t, lng: lng > 180 ? lng - 360 : lng < -180 ? lng + 360 : lng };
+}
+
+/**
+ * The same route ridden the other way: the finish becomes the start. Distances count from the new
+ * start, headings turn round, and the climbing is what used to be the descent. `reversed` says whether
+ * the route now runs against the direction it was recorded or drawn in.
+ * - route: from parseGpxData, or from this function (reversing twice gives the first direction back)
+ */
+export function reverseRoute(route) {
+  const source = route.points;
+  const points = source.map((_, i) => {
+    const pt = source[source.length - 1 - i];
+    const turned = {
+      lat: pt.lat,
+      lng: pt.lng,
+      ele: pt.ele,
+      distance: route.totalDistance - pt.distance,
+      bearing: 0,
+      pathKm: route.pathLength - pt.pathKm,
+    };
+    // a jump is marked on the point after it: the other way round, the point that came before it
+    if (source[source.length - i]?.gap) turned.gap = true;
+    return turned;
+  });
+  setBearings(points);
 
   return {
-    name: routeName,
+    ...route,
     points,
-    parts,
-    pathLength,
-    totalDistance: cumulativeDistance,
-    totalElevationGain: calculateElevationGain(raw),
+    parts: route.parts.map((part) => [...part].reverse()).reverse(),
+    totalElevationGain: route.totalElevationLoss ?? route.totalElevationGain,
+    totalElevationLoss: route.totalElevationGain,
+    reversed: !route.reversed,
   };
 }
 

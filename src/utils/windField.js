@@ -4,9 +4,13 @@ import { cellAt, nodeKey } from './lattice';
 
 const HOUR = 3600;
 
+// a value of a series that may be missing altogether (points saved before the app read the rain) or null
+const numberAt = (series, i) => (Number.isFinite(series?.[i]) ? series[i] : NaN);
+
 /**
  * A forecast point (see fetchPoints) at a moment given in unix seconds.
- * Between two forecast hours the wind is blended; the gusts are those of the hour in progress.
+ * Between two forecast hours the wind is blended; the gusts and the rain are those of the hour in progress.
+ * `rain` (mm in that hour) and `rainChance` (percent) are NaN where the forecast does not say.
  * A moment before the first hour gets the first hour; one after the last hour gets the last hour and
  * `late: true`, so callers can tell a forecast from a stand-in.
  * Returns null for a point without data.
@@ -45,6 +49,9 @@ export function pointAt(point, time) {
     // Open-Meteo's gust for an hour is the strongest gust of the hour that ENDS then, while speed and
     // direction are the values at that moment. So the gusts a rider meets from h:00 on are stored under h + 1.
     gust: point.gust[Math.min(last, h0 + 1)],
+    // the same goes for the rain: what falls from h:00 on, and the chance of it, are stored under h + 1
+    rain: numberAt(point.rain, Math.min(last, h0 + 1)),
+    rainChance: numberAt(point.rainChance, Math.min(last, h0 + 1)),
     temp,
     feels,
     late: position > last + 1e-6,
@@ -58,6 +65,7 @@ export function pointAt(point, time) {
  * - valueAt(key): the lattice point with that key at the wanted moment (see pointAt), or null when it is not loaded
  * Direction is blended as a vector (350° and 10° give 0°, not 180°) and speed as a plain number,
  * so a spot between two opposing winds keeps a realistic speed.
+ * The rain is blended like the speed; it is NaN when one of the four points does not have it.
  * Returns null when no level has the four points: nothing is guessed from further away.
  */
 export function blendAt(lat, lng, levels, valueAt) {
@@ -95,6 +103,8 @@ export function blendAt(lat, lng, levels, valueAt) {
       v,
       speed,
       gust: blend('gust'),
+      rain: blend('rain'),
+      rainChance: blend('rainChance'),
       temp: blend('temp'),
       feels: blend('feels'),
       from: windFromVector(u, v),

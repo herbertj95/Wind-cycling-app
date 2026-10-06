@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { bandScale, windPeaks } from '../utils/routeAnalysis';
+import { isWet } from '../utils/rain';
 
 // Kilometres moved by PageUp / PageDown
 const PAGE_KM = 5;
@@ -12,15 +13,18 @@ const MIN_PROFILE = 20;
  * Two charts sharing the distance axis: the elevation profile and, below it, the wind along the route.
  * Above the line the wind is against the rider, below it the wind is helping. A hairline marks the
  * strongest wind each way, with its value written beside it ("headwind up to 12 km/h").
+ * Where the rider is rained on, the sky over the profile is hatched with falling rain.
  * Drag along it (or use the arrow keys) to ride the route.
  * - wind: per-point analysis from analyseRoute, parallel to route.points; leave it out to draw the profile alone
  * - valueText: what the current position is, in words, for screen readers
  * - compact: one low strip without any text, for the folded route panel: the wind band alone, or the
- *   profile while there is no wind
+ *   profile while there is no wind. The rain is a line along its top edge.
  */
 export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, tailColor, valueText, compact = false }) {
   const svgRef = useRef(null);
   const dragging = useRef(false);
+  // names for the hatching and for the sky it is kept to, unlike those of any other chart on the page
+  const uid = useId().replace(/:/g, '');
   const [size, setSize] = useState({ width: 600, height: 118 });
 
   useEffect(() => {
@@ -65,6 +69,17 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
     let head = null;
     let tail = null;
     let peaks = null;
+    // the stretches ridden in the rain, as [from, to] in px: a point is wet when it rains as the rider gets there
+    const wet = [];
+    if (wind) {
+      points.forEach((p, i) => {
+        if (!isWet(wind[i].rain)) return;
+        const from = x(points[Math.max(0, i - 1)]);
+        const last = wet[wet.length - 1];
+        if (last && from <= last[1] + 0.01) last[1] = x(p);
+        else wet.push([from, x(p)]);
+      });
+    }
     if (wind) {
       const windScale = (windHeight / 2) / bandScale(wind);
       // one closed band per sign: +1 keeps the headwind part above the baseline, -1 the tailwind part below
@@ -82,7 +97,7 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
       };
     }
 
-    return { elevationHeight, windTop, windHeight, baseline, eleMax, profile, head, tail, peaks, x, yEle };
+    return { elevationHeight, windTop, windHeight, baseline, eleMax, profile, head, tail, peaks, wet, x, yEle };
   }, [points, wind, total, width, height, compact]);
 
   const scrub = (clientX) => {
@@ -145,6 +160,24 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
       }}
       onKeyDown={onKeyDown}
     >
+      {/* Rain falling on the stretches ridden in it: short slanted strokes in the sky over the profile. */}
+      {shape.wet.length > 0 && !compact && (
+        <>
+          <defs>
+            <pattern id={`rain-${uid}`} width="9" height="11" patternUnits="userSpaceOnUse" patternTransform="rotate(18)">
+              <line x1="4.5" y1="1.5" x2="4.5" y2="6.5" stroke="var(--rain)" strokeWidth="1.2" strokeLinecap="round" opacity="0.8" />
+            </pattern>
+            <clipPath id={`sky-${uid}`}>
+              <path d={`${shape.profile}L${width} 0L0 0Z`} />
+            </clipPath>
+          </defs>
+          <g className="route-chart-rain" clipPath={`url(#sky-${uid})`}>
+            {shape.wet.map(([from, to]) => (
+              <rect key={from} x={from} y="0" width={Math.max(2, to - from)} height={shape.elevationHeight} fill={`url(#rain-${uid})`} />
+            ))}
+          </g>
+        </>
+      )}
       {showProfile && (
         <>
           <path d={`${shape.profile}L${width} ${shape.elevationHeight}L0 ${shape.elevationHeight}Z`} fill="var(--track)" />
@@ -178,6 +211,10 @@ export default function RouteChart({ route, wind, riderIdx, onScrub, headColor, 
           )}
         </>
       )}
+
+      {compact && shape.wet.map(([from, to]) => (
+        <rect key={from} className="route-chart-rain" x={from} y="0" width={Math.max(2, to - from)} height="3" fill="var(--rain)" />
+      ))}
 
       {/* the bottom left corner is left to the tailwind label, which comes down to it in a strong tailwind */}
       {!compact && <text x={width} y={height - 1} textAnchor="end">{Math.round(total)} km</text>}

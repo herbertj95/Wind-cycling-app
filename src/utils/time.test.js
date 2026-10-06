@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEVICE_ZONE, formatClock, formatDay, formatDayClock, formatDuration, hourStart, validZone, zoneLabel, zoneOffset } from './time';
+import { DEVICE_ZONE, clockHour, markedHours, formatClock, formatDay, formatDayClock, formatDuration, hourStart, validZone, zoneLabel, zoneOffset } from './time';
 
 // Saturday 3 October 2026, 18:42:10 UTC. Lisbon is on summer time (UTC+1), Madrid on UTC+2.
 const MOMENT = Date.UTC(2026, 9, 3, 18, 42, 10) / 1000;
@@ -159,6 +159,63 @@ describe('zoneLabel', () => {
     if (!Number.isInteger(hours)) return;
     const twin = hours === 0 ? 'Etc/GMT' : `Etc/GMT${hours > 0 ? '-' : '+'}${Math.abs(hours)}`;
     expect(zoneLabel(MOMENT, twin)).toBe('');
+  });
+});
+
+describe('clockHour', () => {
+  // 2026-10-05 12:00 UTC
+  const noon = Date.UTC(2026, 9, 5, 12) / 1000;
+
+  it('is the hour on the clock of the zone, not of UTC', () => {
+    expect(clockHour(noon, 'UTC')).toBe(12);
+    expect(clockHour(noon, 'Europe/Lisbon')).toBe(13); // summer time
+    expect(clockHour(noon, 'America/New_York')).toBe(8);
+    expect(clockHour(noon, 'Asia/Tokyo')).toBe(21);
+  });
+
+  it('goes round at midnight, on either side of UTC', () => {
+    expect(clockHour(noon + 3 * 3600, 'Asia/Tokyo')).toBe(0);
+    expect(clockHour(noon - 12 * 3600 - 1, 'UTC')).toBe(23);
+    expect(clockHour(noon - 9 * 3600, 'America/New_York')).toBe(23);
+  });
+
+  it('counts whole hours where clocks run half an hour off, and through the minutes of an hour', () => {
+    // India is 5:30 ahead: 12:00 UTC is 17:30 there
+    expect(clockHour(noon, 'Asia/Kolkata')).toBe(17);
+    expect(clockHour(noon + 1800, 'Asia/Kolkata')).toBe(18);
+    expect(clockHour(noon + 3599, 'UTC')).toBe(12);
+  });
+
+  it('follows the change of clocks', () => {
+    // Lisbon goes back an hour on 25 October 2026 at 01:00 UTC
+    expect(clockHour(Date.UTC(2026, 9, 25, 0, 30) / 1000, 'Europe/Lisbon')).toBe(1);
+    expect(clockHour(Date.UTC(2026, 9, 25, 1, 30) / 1000, 'Europe/Lisbon')).toBe(1);
+    expect(clockHour(Date.UTC(2026, 9, 25, 2, 30) / 1000, 'Europe/Lisbon')).toBe(2);
+  });
+});
+
+describe('markedHours', () => {
+  const run = (from, count) => Array.from({ length: count }, (_, i) => (from + i) % 24);
+  const marks = (hours, every) => markedHours(hours, every).map((on, i) => (on ? hours[i] : null)).filter((h) => h !== null);
+
+  it('marks the hours of the clock that are a multiple of the spacing', () => {
+    expect(marks(run(7, 20), 3)).toEqual([9, 12, 15, 18, 21, 0]);
+    expect(marks(run(22, 8), 2)).toEqual([22, 0, 2, 4]);
+    expect(marks(run(5, 6), 1)).toEqual([5, 6, 7, 8, 9, 10]);
+  });
+
+  it('keeps the marks that far apart on the night the clocks go forward', () => {
+    // Lisbon, the last Sunday of March: after 00:59 comes 02:00
+    const spring = [21, 22, 23, 0, 2, 3, 4, 5, 6, 7, 8];
+    expect(marks(spring, 2)).toEqual([22, 0, 4, 6, 8]);
+    expect(marks(spring, 3)).toEqual([21, 0, 6]);
+    // and on the night they go back, when 01:00 comes twice
+    const autumn = [22, 23, 0, 1, 1, 2, 3, 4, 5, 6];
+    expect(marks(autumn, 2)).toEqual([22, 0, 2, 4, 6]);
+  });
+
+  it('marks nothing without a spacing', () => {
+    expect(markedHours(run(0, 5), 0)).toEqual([false, false, false, false, false]);
   });
 });
 

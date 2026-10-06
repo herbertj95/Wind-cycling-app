@@ -4,7 +4,10 @@ import { timeoutSignal } from './net';
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const SEARCH_URL = 'https://geocoding-api.open-meteo.com/v1/search';
-const FIELDS = ['temperature_2m', 'apparent_temperature', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'];
+const WIND_FIELDS = ['temperature_2m', 'apparent_temperature', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'];
+// The rain comes with the same request: up to ten fields a position still count as one call against the
+// free allowance.
+const RAIN_FIELDS = ['precipitation', 'precipitation_probability'];
 // Hours asked for, counted from the hour in progress: a few back, so the time bar shows how the wind got
 // here, and two days ahead.
 const PAST_HOURS = 3;
@@ -33,7 +36,7 @@ async function httpError(response) {
 function toPoint(location, fetchedAt) {
   const h = location?.hourly;
   const times = h?.time;
-  if (!Array.isArray(times) || times.length === 0 || FIELDS.some((f) => !Array.isArray(h[f]) || h[f].length !== times.length)) {
+  if (!Array.isArray(times) || times.length === 0 || WIND_FIELDS.some((f) => !Array.isArray(h[f]) || h[f].length !== times.length)) {
     throw new Error('Unexpected forecast response');
   }
   if (!finite(times[0]) || (times.length > 1 && times[1] - times[0] !== HOUR)) {
@@ -43,6 +46,8 @@ function toPoint(location, fetchedAt) {
   // kept, so a hole in the data can never be drawn as "0 km/h, calm".
   let n = 0;
   while (n < times.length && finite(h.wind_speed_10m[n]) && finite(h.wind_direction_10m[n]) && finite(h.wind_gusts_10m[n])) n++;
+  // the wind is what the app is for: an answer without the rain is still used, with nothing to say about rain
+  const optional = (name) => (Array.isArray(h[name]) && h[name].length === times.length ? h[name].slice(0, n) : new Array(n).fill(null));
   return {
     t0: times[0],
     n,
@@ -51,6 +56,9 @@ function toPoint(location, fetchedAt) {
     gust: h.wind_gusts_10m.slice(0, n),
     temp: h.temperature_2m.slice(0, n),
     feels: h.apparent_temperature.slice(0, n),
+    // mm of rain (or melted snow) and the chance of any, in percent; null where the model says nothing
+    rain: optional('precipitation'),
+    rainChance: optional('precipitation_probability'),
     zone: typeof location.timezone === 'string' ? location.timezone : null,
     fetchedAt,
   };
@@ -59,7 +67,8 @@ function toPoint(location, fetchedAt) {
 /**
  * Fetches the hourly forecast for a list of positions ({ lat, lng }) in one request.
  * Returns one forecast point per position, in the same order:
- * { t0, n, speed[], dir[], gust[], temp[], feels[], zone, fetchedAt }, where `n` may be 0 when a position has no wind data.
+ * { t0, n, speed[], dir[], gust[], temp[], feels[], rain[], rainChance[], zone, fetchedAt }, where `n` may be 0 when a
+ * position has no wind data.
  * Throws when the request fails: callers decide what to show, nothing is invented.
  * Each position counts as one call against Open-Meteo's free allowance.
  */
@@ -67,7 +76,7 @@ export async function fetchPoints(points) {
   const params = new URLSearchParams({
     latitude: points.map((p) => p.lat).join(','),
     longitude: points.map((p) => p.lng).join(','),
-    hourly: FIELDS.join(','),
+    hourly: [...WIND_FIELDS, ...RAIN_FIELDS].join(','),
     past_hours: String(PAST_HOURS),
     forecast_hours: String(FORECAST_HOURS),
     timeformat: 'unixtime',

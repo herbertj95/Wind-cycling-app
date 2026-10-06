@@ -70,6 +70,29 @@ export function hourStart(unixSeconds, zone) {
   return Math.floor((unixSeconds + offset) / 3600) * 3600 - offset;
 }
 
+/** The hour a clock in the zone shows at a moment, 0 to 23. */
+export function clockHour(unixSeconds, zone) {
+  const local = unixSeconds + zoneOffset(unixSeconds, zone);
+  return Math.floor((((local % 86400) + 86400) % 86400) / 3600);
+}
+
+/**
+ * Which hours of a run carry a mark when one is wanted every `every` hours: those whose hour of the
+ * clock is a multiple of it, so the marks stay put as time passes, unless the mark before is fewer than
+ * `every` hours back. On the night the clocks go forward 00:00 and 02:00 are neighbours, and only the
+ * first of the two is marked.
+ * - clockHours: the hour of the clock of each hour of the run, in order (see clockHour)
+ * Returns one true or false per hour.
+ */
+export function markedHours(clockHours, every) {
+  let last = -Infinity;
+  return clockHours.map((hour, i) => {
+    if (!(every > 0) || hour % every !== 0 || i - last < every) return false;
+    last = i;
+    return true;
+  });
+}
+
 /**
  * "GMT+2" when the zone's clock differs from this device's at that moment, otherwise an empty string:
  * a time is only labelled with its zone when it could be mistaken for the reader's own.

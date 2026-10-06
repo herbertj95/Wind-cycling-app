@@ -1,10 +1,19 @@
-import { CaretDown, CaretUp, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
+import { ArrowsLeftRight, CaretDown, CaretUp, Clock, Drop, Pause, Play, Warning, Wind, X } from '@phosphor-icons/react';
 import RouteChart from './RouteChart';
 import { RIDE_SPEEDS, windPeaks } from '../utils/routeAnalysis';
+import { formatRain, isWet } from '../utils/rain';
 import { formatDuration } from '../utils/time';
 
 const PLAYBACK_RATES = [1, 2.5, 5];
 const DETAILS_ID = 'route-details';
+const FLIP_HINT_ID = 'route-flip-hint';
+
+// a best time to leave in a few words: "today 07:00 to 10:00", "now to 11:00", "tomorrow any time"
+function windowText(w) {
+  if (w.any) return `${w.dayLabel} any time`;
+  const from = w.fromLabel === 'now' ? 'now' : `${w.dayLabel} ${w.fromLabel}`;
+  return w.toLabel ? `${from} to ${w.toLabel}` : from;
+}
 
 function describePoint(point, wind) {
   const place = `km ${point.distance.toFixed(1)}, ${Math.round(point.ele)} m`;
@@ -13,7 +22,8 @@ function describePoint(point, wind) {
   const across = Math.round(Math.abs(wind.cross));
   const alongText = along === 0 ? 'no head or tailwind' : `${along} km/h ${wind.head > 0 ? 'headwind' : 'tailwind'}`;
   const acrossText = across === 0 ? 'nothing across' : `${across} km/h across from the ${wind.cross > 0 ? 'right' : 'left'}`;
-  return `${place}: ${alongText}, ${acrossText}`;
+  const rainText = isWet(wind.rain) ? `, rain ${formatRain(wind.rain)} mm/h` : '';
+  return `${place}: ${alongText}, ${acrossText}${rainText}`;
 }
 
 const NO_WIND_TEXT = {
@@ -27,6 +37,13 @@ const NO_WIND_TEXT = {
  * a plain-language verdict, and the profile you can ride along.
  * - analysis: from analyseRoute
  * - windState: how far the forecast along the route is, 'ready' | 'loading' | 'failed'
+ * - bestTimes: the best time to leave on each of the coming days (see bestWindows), each with its words:
+ *   [{ from, to, best, any, dayLabel, fromLabel, toLabel }], `dayLabel` 'today', 'tomorrow' or a date,
+ *   `fromLabel` "09:00" or 'now', and `toLabel` null for a single hour
+ * - noLightToday: there is no time left today to do the ride in the light
+ * - leavingAt: the hour chosen now; onLeaveAt(time) picks another one for the rider to set off at
+ * - onFlip: turns the route round, or null when that would be the same ride
+ * - flipEasier: the wind makes the route clearly easier the other way round at this hour
  * - collapsed: only the name, the buttons and the wind along the route as a low strip are shown, to
  *   leave the map free
  * - colors: { tail, neutral, head } for the current theme
@@ -45,6 +62,12 @@ export default function RoutePanel({
   rideKmh,
   onRideKmh,
   startLabel,
+  bestTimes,
+  noLightToday,
+  leavingAt,
+  onLeaveAt,
+  onFlip,
+  flipEasier,
   collapsed,
   onToggleCollapsed,
   colors,
@@ -71,7 +94,26 @@ export default function RoutePanel({
     <section className={collapsed ? 'route-panel panel collapsed' : 'route-panel panel'}>
       <div className="route-head">
         <h2 title={route.name}>{route.name}</h2>
-        <span className="route-meta">{route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing</span>
+        <div className="route-sub">
+          <span className="route-meta">
+            {route.totalDistance.toFixed(1)} km, {route.totalElevationGain} m of climbing{route.reversed && ', reversed'}
+          </span>
+          {onFlip && (
+            <button
+              type="button"
+              className="route-flip"
+              onClick={onFlip}
+              title="Ride this route the other way round"
+              aria-label="Reverse the route"
+              aria-pressed={Boolean(route.reversed)}
+              aria-describedby={flipEasier ? FLIP_HINT_ID : undefined}
+            >
+              <ArrowsLeftRight size={15} aria-hidden="true" />
+              <span>Reverse</span>
+              {flipEasier && <small id={FLIP_HINT_ID}>easier that way</small>}
+            </button>
+          )}
+        </div>
         <div className="route-actions">
           <button type="button" className="pill-button" onClick={onTogglePlay} aria-label={playing ? 'Pause the ride' : 'Ride the route'}>
             {playing ? <Pause size={14} weight="fill" /> : <Play size={14} weight="fill" />}
@@ -128,7 +170,7 @@ export default function RoutePanel({
             tailColor={colors.tail}
             valueText={pointText}
           />
-          {wind && <Peaks wind={wind} colors={colors} />}
+          {wind && <Peaks wind={wind} colors={colors} rain={analysis.rain} />}
         </div>
       ) : (
         <div className="route-body" id={DETAILS_ID}>
@@ -148,6 +190,30 @@ export default function RoutePanel({
                   {analysis.beyondForecast && ' The ride ends after the forecast does.'}
                   {analysis.outsideKm > total * 0.05 && (windState === 'loading' ? ' Part of the wind is still loading.' : ' Part of it has no forecast.')}
                 </p>
+
+                {(bestTimes.length > 0 || noLightToday) && (
+                  <p className="route-best">
+                    <Clock size={13} weight="bold" aria-hidden="true" />
+                    <span>
+                      {bestTimes.length > 0 && 'Best: '}
+                      {bestTimes.map((w, i) => (
+                        <span key={w.from} className="best-time">
+                          {i > 0 && ', '}
+                          <button
+                            type="button"
+                            className="text-button"
+                            aria-pressed={leavingAt >= w.from && leavingAt <= w.to}
+                            onClick={() => onLeaveAt(w.best)}
+                          >
+                            {windowText(w)}
+                          </button>
+                        </span>
+                      ))}
+                      {bestTimes.length > 0 && noLightToday && '. '}
+                      {noLightToday && 'Not enough daylight today.'}
+                    </span>
+                  </p>
+                )}
 
                 {shareBar}
                 <Shares analysis={analysis} parts={parts} total={total} />
@@ -173,8 +239,11 @@ export default function RoutePanel({
   );
 }
 
-/** The strongest headwind and tailwind of the route, as the key of the folded strip. */
-function Peaks({ wind, colors }) {
+/**
+ * The strongest headwind and tailwind of the route, as the key of the folded strip; and the heaviest
+ * rain, on a ride that meets any (the line along the top of the strip says where).
+ */
+function Peaks({ wind, colors, rain }) {
   const peaks = windPeaks(wind);
   const rows = [
     ['Headwind', peaks.head, colors.head],
@@ -189,6 +258,13 @@ function Peaks({ wind, colors }) {
           {Math.round(kmh) > 0 ? `up to ${Math.round(kmh)} km/h` : 'none'}
         </span>
       ))}
+      {isWet(rain.max) && (
+        <span className="route-peaks-rain">
+          <Drop size={10} weight="fill" aria-hidden="true" />
+          <span className="visually-hidden">Rain </span>
+          up to {formatRain(rain.max)} mm/h
+        </span>
+      )}
     </div>
   );
 }
@@ -219,8 +295,21 @@ function Shares({ analysis, parts, total }) {
 
       <p className={`route-advice ${advisory.tone}`}>
         <AdviceIcon size={16} aria-hidden="true" />
-        <span><b>{advisory.title}.</b> <span className="advice-text">{advisory.text}</span></span>
+        <span>
+          <b>{advisory.title}.</b>
+          {analysis.orderNote && <> <span className="advice-order">{analysis.orderNote}</span></>}
+          {' '}
+          <span className="advice-text">{advisory.text}</span>
+        </span>
       </p>
+
+      {/* only on a ride with rain, or a real chance of it */}
+      {analysis.rainNote && (
+        <p className="route-advice route-rain">
+          <Drop size={16} weight="fill" aria-hidden="true" />
+          <span>{analysis.rainNote}</span>
+        </p>
+      )}
     </>
   );
 }

@@ -30,6 +30,8 @@
   --tail: #3987e5;
   --head: #e66767;
   --cross: #b4bec6;
+  /* Rain. Blue already means the wind is behind you, so rain is a teal, and never without its drop or its hatching. */
+  --rain: #2ca8a3;
 }
 
 /* Day map, for reading in the sun */
@@ -49,6 +51,7 @@
   --tail: #2a78d6;
   --head: #e34948;
   --cross: #87919a;
+  --rain: #0f9a94;
 }
 
 *,

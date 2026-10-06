@@ -13,7 +13,7 @@ const SPENT_KEY = 'wind-spent-v1';
 /**
  * Stand-in for the forecast service. Every position gets `hours` hourly values starting three hours before
  * the hour in progress, like the real request: speed 10 km/h at the first hour and 1 km/h more each hour,
- * always from the north.
+ * always from the north. Every fourth hour brings 0.5 mm of rain at a 70 % chance; the others are dry at 10 %.
  * `fail` makes requests reject with that error; `gate` holds them until it resolves.
  */
 function makeService(hours = 52) {
@@ -36,6 +36,8 @@ function makeService(hours = 52) {
         gust: Array.from({ length: hours }, (_, h) => 20 + h),
         temp: new Array(hours).fill(18),
         feels: new Array(hours).fill(17),
+        rain: Array.from({ length: hours }, (_, h) => (h % 4 === 0 ? 0.5 : 0)),
+        rainChance: Array.from({ length: hours }, (_, h) => (h % 4 === 0 ? 70 : 10)),
         zone: p.lng < -6 ? 'Europe/Lisbon' : 'Europe/Madrid',
         fetchedAt,
       }));
@@ -235,6 +237,34 @@ describe('downloading what is needed', () => {
     store.destroy();
     await settle(5000);
     expect(service.fetchPoints).not.toHaveBeenCalled();
+  });
+});
+
+describe('stamp', () => {
+  it('changes when points inside the bounds arrive and when they are renewed, and not when others do', async () => {
+    const wind = () => store.getSnapshot();
+    const lisbon = { south: 38.5, west: -9.5, north: 39, east: -8.9 };
+    const empty = wind().stamp(lisbon);
+    store.want('focus', LISBON);
+    await settle();
+    const loaded = wind().stamp(lisbon);
+    expect(loaded).not.toBe(empty);
+
+    // points far away
+    store.want('view', row(10));
+    await settle();
+    expect(wind().stamp(lisbon)).toBe(loaded);
+
+    // a coarser point inside counts as well
+    store.want('route', nodesAround(2, 38.7, -9.2));
+    await settle();
+    const more = wind().stamp(lisbon);
+    expect(more).not.toBe(loaded);
+
+    await settle(STALE_MS + 2 * MINUTE_MS);
+    store.refresh();
+    await settle();
+    expect(wind().stamp(lisbon)).not.toBe(more);
   });
 });
 
@@ -969,6 +999,30 @@ describe('the copy kept on the device', () => {
     const next = newStore();
     expect(next.getSnapshot().state(LISBON)).toBe('loading');
     expect(next.getSnapshot().sample(38.73, -9.14, nowSeconds(), { late: true })).toBeNull();
+    next.destroy();
+  });
+
+  it('keeps the rain with the saved forecast', async () => {
+    store.want('focus', LISBON);
+    await settle(1500);
+    const next = newStore();
+    // twenty past the fourth hour of the forecast: the rain of that hour is filed under the fifth
+    const at = next.getSnapshot().sample(38.73, -9.14, START / 1000, POINT);
+    expect(at.rain).toBeCloseTo(0.5, 9);
+    expect(at.rainChance).toBeCloseTo(70, 9);
+    next.destroy();
+  });
+
+  it('reads a forecast saved before the app read the rain: the wind is there, the rain is unknown', async () => {
+    store.want('focus', LISBON);
+    await settle(1500);
+    const saved = JSON.parse(storage.data[STORAGE_KEY]);
+    saved.points = saved.points.map((entry) => entry.slice(0, 11));
+    const next = createWindStore({ fetchPoints: service.fetchPoints, storage: memoryStorage({ [STORAGE_KEY]: JSON.stringify(saved) }) });
+    const at = next.getSnapshot().sample(38.73, -9.14, START / 1000, POINT);
+    expect(at.speed).toBeCloseTo(10 + 10 / 3, 6);
+    expect(Number.isNaN(at.rain)).toBe(true);
+    expect(Number.isNaN(at.rainChance)).toBe(true);
     next.destroy();
   });
 
