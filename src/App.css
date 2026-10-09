@@ -103,6 +103,29 @@
   white-space: nowrap;
 }
 
+/* a choice that is on or off, drawn like the speed buttons: pressed, it is filled */
+.toggle-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.toggle-button[aria-pressed='true'] {
+  background: var(--track);
+  border-color: transparent;
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* on phones the three speed buttons become one that cycles */
 .speed-cycle {
   display: none;
@@ -469,6 +492,20 @@
 
 .readout-offline .text-button {
   color: var(--ink);
+}
+
+/* the way to the place in focus: a ride there, or there and back */
+.readout-go {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hair);
+}
+
+.readout-go .pill-button[disabled] {
+  opacity: 0.7;
 }
 
 .readout-message {
@@ -1515,7 +1552,8 @@
   }
 
   .readout-effect,
-  .readout-offline {
+  .readout-offline,
+  .readout-go {
     margin-top: 6px;
     padding-top: 6px;
     font-size: 13px;
@@ -1906,6 +1944,11 @@
   .pill-button {
     height: 44px;
     padding: 0 16px;
+  }
+
+  .toggle-button {
+    height: 44px;
+    padding: 0 14px;
   }
 
   .segmented button {
