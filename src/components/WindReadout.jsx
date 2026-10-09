@@ -217,17 +217,14 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
                 {station.verdict === 'as forecast' && ', as forecast'}
                 {station.verdict && station.verdict !== 'as forecast' && (
                   <>
-                    <span className="measured-wide">, {station.verdict} (forecast {Math.round(measured.forecast)})</span>
-                    <span className="measured-narrow">, forecast {Math.round(measured.forecast)}</span>
+                    <span className="measured-wide">, {station.verdict} (forecast {Math.round(measured.forecast)} km/h)</span>
+                    <span className="measured-narrow">, forecast {Math.round(measured.forecast)} km/h</span>
                   </>
                 )}
+                {/* where the station stands: on its own line, or after a dot where the line runs on */}
                 <small>
-                  <span className="measured-narrow"> · </span>
-                  <span className="measured-wide">{measured.name}, </span>
-                  {station.km}
-                  <span className="measured-wide"> away. Source: </span>
-                  <span className="measured-narrow">, </span>
-                  IPMA
+                  <span className="measured-joint"> · </span>
+                  IPMA station <span className="measured-wide">{measured.name}, </span>{station.km} away
                 </small>
               </span>
             </p>

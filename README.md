@@ -153,7 +153,7 @@ The route panel also says which part of the ride has the wind against you, when 
 
 ### Measured wind
 
-Where an IPMA station is within 30 km of the place in the readout, and the readout shows the present, the panel adds what that station measured in the last two hours and how it compares with the forecast for the same spot and hour: less than 5 km/h apart is *as forecast* (a phone, short of room, gives the forecast figure instead of the words when the two differ by more). Stations report every hour, with the wind as one of eight directions. It is shown for a place, a tapped point, your position, or the start of a route (on a phone, the line about what the wind does to the rider takes its place there), never for a later time or a later point of the ride.
+Where an IPMA station is within 30 km of the place in the readout, and the readout shows the present, the panel adds what that station measured in the last two hours and how it compares with the forecast for the same spot and hour: less than 5 km/h apart is *as forecast* (a phone, short of room, gives the forecast figure instead of the words when the two differ by more). Under it, how far away the station is, and its name where there is room. Stations report every hour, with the wind as one of eight directions. It is shown for a place, a tapped point, your position, or the start of a route (on a phone, the line about what the wind does to the rider takes its place there), never for a later time or a later point of the ride.
 
 ### Rain
 

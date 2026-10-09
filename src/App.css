@@ -375,7 +375,8 @@
   font-weight: 600;
 }
 
-.measured-narrow {
+.measured-narrow,
+.measured-joint {
   display: none;
 }
 
@@ -1757,8 +1758,8 @@
     height: 63px;
   }
 
-  /* The measured wind takes the place of the note, on one line: how far the station is and whose it
-     is stay, its name is left to the wider screens. */
+  /* The measured wind takes the place of the note: the measurement on one line and, under it, how far
+     the station is and whose it is; its name is left to the wider screens. */
   .readout-measured {
     margin-top: 6px;
     padding-top: 6px;
@@ -1778,8 +1779,7 @@
   }
 
   .readout-measured small {
-    display: inline;
-    margin: 0;
+    font-size: 11px;
   }
 
   .measured-wide,
@@ -1855,13 +1855,14 @@
     display: none;
   }
 
-  /* the station is named by its distance and the source, as on a phone */
+  /* the station is named by its distance, as on a phone, on the same line */
   .readout-measured small {
     display: inline;
     margin: 0;
   }
 
-  .measured-narrow {
+  .measured-narrow,
+  .measured-joint {
     display: inline;
   }
 }
@@ -1888,7 +1889,8 @@
     margin: 0;
   }
 
-  .app:has(.route-panel) .measured-narrow {
+  .app:has(.route-panel) .measured-narrow,
+  .app:has(.route-panel) .measured-joint {
     display: inline;
   }
 }
