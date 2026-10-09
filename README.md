@@ -33,7 +33,7 @@ The map is the whole screen. The wind is drawn on top of it wherever you take th
 * **Weather**: [Open-Meteo](https://open-meteo.com) hourly forecast: 10 m wind, temperature, and precipitation with its probability. "Now" is the current minute, blended between the two forecast hours around it; gusts and rain are those of the hour in progress.
 * **Place search**: the Open-Meteo geocoding API (names from [GeoNames](https://www.geonames.org/))
 * **Measured wind**: the open data of [IPMA](https://api.ipma.pt/), the weather service of Portugal: the surface observations of its stations, one file for the whole country, hour by hour. The app asks for it at most every 20 minutes (a download that fails is tried again after 5), only while the place in the readout is in or near Portugal (mainland, Madeira or the Azores), and keeps the last copy on the device. Nothing about you or your position is sent. IPMA asks those who use its API to tell it how, at webmaster@ipma.pt.
-* **Routes to a point**: [BRouter](https://brouter.de/) (its *fastbike* profile: asphalt, and off the big roads where it can), and [Valhalla](https://valhalla.github.io/valhalla/) on the OpenStreetMap.de server when BRouter does not answer. Both work on [OpenStreetMap](https://www.openstreetmap.org/copyright) data, need no key, and are public servers kept for fair use: a route now and then, not one every second. The route comes back as a GPX track with heights (Valhalla's heights are asked for apart) and goes through the same code as a file. Only your position and the point you chose are sent, when you press the button.
+* **Routes to a point**: [BRouter](https://brouter.de/) (its *fastbike* profile: asphalt, and off the big roads where it can), and [Valhalla](https://valhalla.github.io/valhalla/) on the OpenStreetMap.de server when BRouter does not answer or finds no way. Both work on [OpenStreetMap](https://www.openstreetmap.org/copyright) data, need no key, and are public servers kept for fair use: a route now and then, not one every second. The route comes back as a GPX track with heights (Valhalla's heights are asked for apart) and goes through the same code as a file. Only your position and the point you chose are sent, when you press the button.
 * **Android**: Capacitor
 * **Styling**: plain CSS (`src/index.css` for tokens, `src/App.css` for layout)
 
@@ -137,7 +137,7 @@ The app icon is the W of Wind drawn as a route in the app's three wind colours. 
 5. **Load a route**: open **Routes** and open your own `.gpx` file, or choose one of the routes around Lisbon. You can also drop a file on the map.
 6. **Ride it**: move along the profile to see head, tail and crosswind at each kilometre. Set your average speed to match your ride.
 7. **Choose when to go**: tap one of the best times in the route panel to plan the ride for then, or pick any hour on the bar. *Reverse* turns the route round.
-8. **Ride to a point**: tap the map or pick a place, then *Route here* in the readout. *And back* makes it a ride there and back. The route starts from your position (the app asks for it if it does not have it yet) and is not made for points more than 200 km away as the crow flies.
+8. **Ride to a point**: tap the map or pick a place, then *Route here* in the readout. *And back* makes it a ride there and back. The route starts from your position (a fix from the last two minutes, or a fresh one; the app asks for it if it has none) and is not made for points more than 200 km away as the crow flies.
 
 ### Reading the wind along a route
 

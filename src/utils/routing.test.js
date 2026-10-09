@@ -34,20 +34,65 @@ const answer = (status, body, type = 'application/json') => ({
   headers: { get: () => type },
 });
 
-/** A fetch that answers each service as told: { brouter, valhalla, height } are answers or errors to throw. */
+// writes points the way decodePolyline reads them: the way back of a ride, for a test
+function encodePolyline(points, precision = 6) {
+  const scale = 10 ** precision;
+  let out = '';
+  let lastLat = 0;
+  let lastLng = 0;
+  const push = (value) => {
+    let v = value < 0 ? ~(value << 1) : value << 1;
+    while (v >= 0x20) {
+      out += String.fromCharCode((0x20 | (v & 0x1f)) + 63);
+      v >>= 5;
+    }
+    out += String.fromCharCode(v + 63);
+  };
+  for (const p of points) {
+    const lat = Math.round(p.lat * scale);
+    const lng = Math.round(p.lng * scale);
+    push(lat - lastLat);
+    push(lng - lastLng);
+    lastLat = lat;
+    lastLng = lng;
+  }
+  return out;
+}
+
+// what a real fetch rejects with once its signal is aborted
+const abortError = () => new DOMException('The operation was aborted.', 'AbortError');
+// an answer that never comes, until the request's own signal gives up on it
+const SILENT = Symbol('silent');
+
+/**
+ * A fetch that answers each service as told: { brouter, valhalla, height } are answers, errors to throw, or
+ * SILENT, which only ever rejects with an AbortError once the signal fetch was given is aborted (a
+ * timeout, or the caller). `height` may also be a function of the request's body.
+ */
 function stubFetch({ brouter, valhalla, height }) {
   const calls = [];
-  const fetchMock = vi.fn(async (url, options = {}) => {
+  const fetchMock = vi.fn((url, options = {}) => {
     calls.push({ url: String(url), options });
-    const pick = String(url).includes('brouter.de') ? brouter : String(url).endsWith('/height') ? height : valhalla;
-    if (pick instanceof Error) throw pick;
-    return pick;
+    let pick = String(url).includes('brouter.de') ? brouter : String(url).endsWith('/height') ? height : valhalla;
+    if (typeof pick === 'function') pick = pick(JSON.parse(options.body));
+    if (pick === SILENT) {
+      return new Promise((resolve, reject) => {
+        const { signal } = options;
+        if (signal?.aborted) reject(abortError());
+        else signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+      });
+    }
+    if (pick instanceof Error) return Promise.reject(pick);
+    return Promise.resolve(pick);
   });
   vi.stubGlobal('fetch', fetchMock);
   return calls;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe('decodePolyline', () => {
   it('reads an encoded polyline with the decimals it was written with', () => {
@@ -124,6 +169,11 @@ describe('fetchBikeRoute', () => {
     expect(asked.costing_options.bicycle.bicycle_type).toBe('Road');
     expect(asked.locations).toEqual([{ lat: 38.7223, lon: -9.1393 }, { lat: 38.8975, lon: -9.0344 }]);
     expect(JSON.parse(calls[2].options.body)).toEqual({ encoded_polyline: GOOGLE_SAMPLE });
+    // both are sent as JSON, which a GET could not carry
+    for (const call of calls.slice(1)) {
+      expect(call.options.method).toBe('POST');
+      expect(call.options.headers['Content-Type']).toBe('application/json');
+    }
     const parsed = parseGpxData(route.gpx, 'Made up');
     expect(parsed.points).toHaveLength(3);
     parsed.points.forEach((p, i) => {
@@ -133,12 +183,43 @@ describe('fetchBikeRoute', () => {
     });
   });
 
-  it('turns to Valhalla when BRouter is down or does not answer in time', async () => {
-    for (const trouble of [answer(500, ''), answer(502, 'bad gateway', 'text/html'), Object.assign(new Error('timed out'), { name: 'TimeoutError' }), answer(200, 'operation killed', 'text/plain')]) {
+  it('turns to Valhalla when BRouter is down or answers with something else', async () => {
+    for (const trouble of [answer(500, ''), answer(502, 'bad gateway', 'text/html'), answer(200, 'operation killed', 'text/plain')]) {
       vi.unstubAllGlobals();
       stubFetch({ brouter: trouble, valhalla: answer(200, VALHALLA_ROUTE), height: answer(200, VALHALLA_HEIGHTS) });
       expect((await fetchBikeRoute([LISBON, ALVERCA])).by).toBe('Valhalla');
     }
+  });
+
+  it('gives BRouter 30 seconds, then turns to Valhalla', async () => {
+    vi.useFakeTimers();
+    const calls = stubFetch({ brouter: SILENT, valhalla: answer(200, VALHALLA_ROUTE), height: answer(200, VALHALLA_HEIGHTS) });
+    let settled = null;
+    const route = fetchBikeRoute([LISBON, ALVERCA]).then((r) => { settled = r; return r; });
+    await vi.advanceTimersByTimeAsync(29999);
+    expect(calls).toHaveLength(1);
+    expect(settled).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await route).by).toBe('Valhalla');
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(['/brouter', '/route', '/height']);
+  });
+
+  it('gives Valhalla 15 seconds, and then says the services are not answering', async () => {
+    vi.useFakeTimers();
+    stubFetch({ brouter: answer(500, ''), valhalla: SILENT });
+    const route = fetchBikeRoute([LISBON, ALVERCA]).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(15000);
+    const error = await route;
+    expect(error).toBeInstanceOf(RoutingError);
+    expect(error.kind).toBe('service');
+  });
+
+  it('does without the heights when they do not come in time', async () => {
+    vi.useFakeTimers();
+    stubFetch({ brouter: answer(500, ''), valhalla: answer(200, VALHALLA_ROUTE), height: SILENT });
+    const route = fetchBikeRoute([LISBON, ALVERCA]);
+    await vi.advanceTimersByTimeAsync(15000);
+    expect((await route).gpx).not.toContain('<ele>');
   });
 
   it('does without the heights when Valhalla does not give them', async () => {
@@ -149,10 +230,23 @@ describe('fetchBikeRoute', () => {
     expect(parseGpxData(route.gpx).points).toHaveLength(3);
   });
 
-  it('joins the legs of a ride there and back without doubling the turning point', async () => {
-    stubFetch({ brouter: answer(500, ''), valhalla: answer(200, { trip: { legs: [{ shape: GOOGLE_SAMPLE }, { shape: GOOGLE_SAMPLE }] } }), height: answer(200, VALHALLA_HEIGHTS) });
+  it('joins the legs of a ride there and back without doubling the turning point, each with its own heights', async () => {
+    // the way back: the same line the other way round, written afresh
+    const back = encodePolyline([...decodePolyline(GOOGLE_SAMPLE)].reverse());
+    expect(back).not.toBe(GOOGLE_SAMPLE);
+    const heights = { [GOOGLE_SAMPLE]: [1, 2, 3], [back]: [3, 40, 50] };
+    stubFetch({
+      brouter: answer(500, ''),
+      valhalla: answer(200, { trip: { legs: [{ shape: GOOGLE_SAMPLE }, { shape: back }] } }),
+      height: (body) => answer(200, { height: heights[body.encoded_polyline] }),
+    });
     const route = await fetchBikeRoute([LISBON, ALVERCA, LISBON]);
-    expect(parseGpxData(route.gpx).points).toHaveLength(5);
+    const points = parseGpxData(route.gpx).points;
+    expect(points).toHaveLength(5);
+    expect(points.map((p) => p.ele)).toEqual([1, 2, 3, 40, 50]);
+    // the fourth and fifth points are the way back: the first two points of the line, the other way round
+    expect(points[3].lat).toBeCloseTo(GOOGLE_POINTS[1].lat / 10, 6);
+    expect(points[4].lat).toBeCloseTo(GOOGLE_POINTS[0].lat / 10, 6);
   });
 
   it('refuses a point too far away before asking anyone', async () => {
@@ -163,6 +257,9 @@ describe('fetchBikeRoute', () => {
     expect(error.message).toMatch(/^That point is 27\d km away as the crow flies: too far to ride to from here\.$/);
     expect(calls).toHaveLength(0);
     expect(ROUTE_MAX_KM).toBe(200);
+    // a point just over the limit is not called 200 km away, which would be within it
+    const just = { lat: LISBON.lat + 200.32 / 111.19492664455873, lng: LISBON.lng };
+    expect((await fetchBikeRoute([LISBON, just]).catch((e) => e)).message).toMatch(/^That point is 201 km away/);
   });
 
   it('says there is no way when either service says so, and both have been asked', async () => {
@@ -172,6 +269,10 @@ describe('fetchBikeRoute', () => {
     expect(error.message).toBe('No bike route was found to that point.');
     vi.unstubAllGlobals();
     stubFetch({ brouter: answer(503, ''), valhalla: answer(400, {}) });
+    expect((await fetchBikeRoute([LISBON, ALVERCA]).catch((e) => e)).kind).toBe('none');
+    // and the other way round: BRouter's 400 is "no way" even when Valhalla is down
+    vi.unstubAllGlobals();
+    stubFetch({ brouter: answer(400, 'datafile not found', 'text/plain'), valhalla: answer(500, '') });
     expect((await fetchBikeRoute([LISBON, ALVERCA]).catch((e) => e)).kind).toBe('none');
   });
 
@@ -189,10 +290,30 @@ describe('fetchBikeRoute', () => {
 
   it('is cancelled by its signal without turning to the next service', async () => {
     const controller = new AbortController();
-    const aborted = Object.assign(new Error('aborted'), { name: 'AbortError' });
-    const calls = stubFetch({ brouter: aborted, valhalla: answer(200, VALHALLA_ROUTE) });
+    const calls = stubFetch({ brouter: SILENT, valhalla: answer(200, VALHALLA_ROUTE) });
+    const route = fetchBikeRoute([LISBON, ALVERCA], { signal: controller.signal });
     controller.abort();
-    await expect(fetchBikeRoute([LISBON, ALVERCA], { signal: controller.signal })).rejects.toThrow('aborted');
+    await expect(route).rejects.toThrow('aborted');
+    // the signal reached the request itself
     expect(calls).toHaveLength(1);
+    expect(calls[0].options.signal.aborted).toBe(true);
+  });
+
+  it('is cancelled while Valhalla is asked, and while its heights are', async () => {
+    const during = new AbortController();
+    const calls = stubFetch({ brouter: answer(500, ''), valhalla: SILENT });
+    const route = fetchBikeRoute([LISBON, ALVERCA], { signal: during.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    during.abort();
+    await expect(route).rejects.toThrow('aborted');
+    expect(calls.map((c) => new URL(c.url).pathname)).toEqual(['/brouter', '/route']);
+
+    vi.unstubAllGlobals();
+    const late = new AbortController();
+    stubFetch({ brouter: answer(500, ''), valhalla: answer(200, VALHALLA_ROUTE), height: SILENT });
+    const later = fetchBikeRoute([LISBON, ALVERCA], { signal: late.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    late.abort();
+    await expect(later).rejects.toThrow('aborted');
   });
 });

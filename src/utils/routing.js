@@ -18,7 +18,7 @@ const POLYLINE_PRECISION = 6;
 export const ROUTE_MAX_KM = 200;
 
 const MESSAGES = {
-  far: (km) => `That point is ${Math.round(km)} km away as the crow flies: too far to ride to from here.`,
+  far: (km) => `That point is ${Math.ceil(km)} km away as the crow flies: too far to ride to from here.`,
   none: 'No bike route was found to that point.',
   offline: 'Could not reach the routing service. Check your connection.',
   service: 'The routing services are not answering right now. Try again in a while.',
@@ -140,8 +140,9 @@ async function fromValhalla(waypoints, signal) {
         signal: timeoutSignal(VALHALLA_TIMEOUT_MS, signal),
       });
       if (answer.ok) heights = (await answer.json()).height ?? [];
-    } catch {
-      // the profile of the ride will be flat, the wind along it is what matters
+    } catch (error) {
+      // the profile of the ride will be flat, the wind along it is what matters; a cancelled request is still cancelled
+      if (signal?.aborted) throw error;
     }
     shape.forEach((p, i) => {
       // legs share their joining point

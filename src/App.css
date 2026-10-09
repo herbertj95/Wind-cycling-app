@@ -1909,17 +1909,25 @@
    readout and the dock no longer fit one above the other, and the dock would lie over the foot of the
    readout. Where the window is wide enough for the profile to stay beside the summary, the dock starts
    to the right of the readout instead. */
-@media (min-width: 1250px) and (min-height: 601px) and (max-height: 840px) {
+@media (min-width: 1000px) and (min-height: 601px) and (max-height: 840px) {
   .dock:has(.route-panel) {
     left: calc(292px + 2 * var(--gap) + env(safe-area-inset-left));
   }
 }
 
-/* Where it is not that wide, the readout leaves out its hint and names the station as a phone does. */
-@media (min-width: 721px) and (max-width: 1249px) and (min-height: 601px) and (max-height: 840px) {
+/* Where it is not that wide, the readout keeps to the reading, the measurement and the way to the place,
+   and names the station as a phone does. */
+@media (min-width: 721px) and (max-width: 999px) and (min-height: 601px) and (max-height: 840px) {
   .app:has(.route-panel) .readout-hint,
+  .app:has(.route-panel) .readout-note,
+  .app:has(.route-panel) .readout-stats,
   .app:has(.route-panel) .measured-wide {
     display: none;
+  }
+
+  .app:has(.route-panel) .readout-go {
+    margin-top: 6px;
+    padding-top: 6px;
   }
 
   .app:has(.route-panel) .readout-measured small {
