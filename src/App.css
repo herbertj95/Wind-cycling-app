@@ -103,27 +103,55 @@
   white-space: nowrap;
 }
 
-/* a choice that is on or off, drawn like the speed buttons: pressed, it is filled */
-.toggle-button {
+/* a choice that is on or off: a box that gets a tick, with its words beside it */
+.check-box {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   height: 34px;
-  padding: 0 11px;
-  border: 1px solid var(--hair);
-  border-radius: 8px;
-  background: none;
+  padding: 0 4px;
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-2);
   white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
 }
 
-.toggle-button[aria-pressed='true'] {
-  background: var(--track);
-  border-color: transparent;
+/* the browser's own box is kept for the keyboard and screen readers, out of sight */
+.check-box input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.check-box i {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 5px;
+  color: var(--inv-ink);
+}
+
+.check-box input:checked ~ i {
+  border-color: var(--inv);
+  background: var(--inv);
+}
+
+.check-box input:checked ~ span {
   color: var(--ink);
   font-weight: 600;
+}
+
+.check-box input:focus-visible ~ i {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 /* on phones the three speed buttons become one that cycles */
@@ -1954,9 +1982,14 @@
     padding: 0 16px;
   }
 
-  .toggle-button {
+  .check-box {
     height: 44px;
-    padding: 0 14px;
+    padding: 0 6px;
+  }
+
+  .check-box i {
+    width: 22px;
+    height: 22px;
   }
 
   .segmented button {

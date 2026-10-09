@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowsLeftRight, BookmarkSimple, CaretDown, CaretUp, Drop, Gauge, NavigationArrow, WifiSlash } from '@phosphor-icons/react';
+import { BookmarkSimple, CaretDown, CaretUp, Check, Drop, Gauge, NavigationArrow, WifiSlash } from '@phosphor-icons/react';
 import WindDial from './WindDial';
 import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees } from '../utils/wind';
 import { describeRain, formatRain, isWet } from '../utils/rain';
@@ -268,16 +268,11 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
             <NavigationArrow size={15} weight="fill" aria-hidden="true" />
             <span>{go.busy ? 'Finding a route…' : 'Route here'}</span>
           </button>
-          <button
-            type="button"
-            className="toggle-button"
-            aria-pressed={go.roundTrip}
-            title={go.roundTrip ? 'A ride there and back' : 'A ride there only'}
-            onClick={go.onToggleRoundTrip}
-          >
-            <ArrowsLeftRight size={14} aria-hidden="true" />
+          <label className="check-box" title={go.roundTrip ? 'A ride there and back' : 'A ride there only'}>
+            <input type="checkbox" checked={go.roundTrip} onChange={go.onToggleRoundTrip} />
+            <i aria-hidden="true">{go.roundTrip && <Check size={13} weight="bold" />}</i>
             <span>and back</span>
-          </button>
+          </label>
         </div>
       )}
 
