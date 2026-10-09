@@ -103,6 +103,57 @@
   white-space: nowrap;
 }
 
+/* a choice that is on or off: a box that gets a tick, with its words beside it */
+.check-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* the browser's own box is kept for the keyboard and screen readers, out of sight */
+.check-box input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.check-box i {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 5px;
+  color: var(--inv-ink);
+}
+
+.check-box input:checked ~ i {
+  border-color: var(--inv);
+  background: var(--inv);
+}
+
+.check-box input:checked ~ span {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.check-box input:focus-visible ~ i {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
 /* on phones the three speed buttons become one that cycles */
 .speed-cycle {
   display: none;
@@ -375,7 +426,8 @@
   font-weight: 600;
 }
 
-.measured-narrow {
+.measured-narrow,
+.measured-joint {
   display: none;
 }
 
@@ -468,6 +520,20 @@
 
 .readout-offline .text-button {
   color: var(--ink);
+}
+
+/* the way to the place in focus: a ride there, or there and back */
+.readout-go {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hair);
+}
+
+.readout-go .pill-button[disabled] {
+  opacity: 0.7;
 }
 
 .readout-message {
@@ -1514,7 +1580,8 @@
   }
 
   .readout-effect,
-  .readout-offline {
+  .readout-offline,
+  .readout-go {
     margin-top: 6px;
     padding-top: 6px;
     font-size: 13px;
@@ -1757,8 +1824,8 @@
     height: 63px;
   }
 
-  /* The measured wind takes the place of the note, on one line: how far the station is and whose it
-     is stay, its name is left to the wider screens. */
+  /* The measured wind takes the place of the note: the measurement on one line and, under it, how far
+     the station is and whose it is; its name is left to the wider screens. */
   .readout-measured {
     margin-top: 6px;
     padding-top: 6px;
@@ -1778,8 +1845,7 @@
   }
 
   .readout-measured small {
-    display: inline;
-    margin: 0;
+    font-size: 11px;
   }
 
   .measured-wide,
@@ -1855,13 +1921,14 @@
     display: none;
   }
 
-  /* the station is named by its distance and the source, as on a phone */
+  /* the station is named by its distance, as on a phone, on the same line */
   .readout-measured small {
     display: inline;
     margin: 0;
   }
 
-  .measured-narrow {
+  .measured-narrow,
+  .measured-joint {
     display: inline;
   }
 }
@@ -1870,17 +1937,25 @@
    readout and the dock no longer fit one above the other, and the dock would lie over the foot of the
    readout. Where the window is wide enough for the profile to stay beside the summary, the dock starts
    to the right of the readout instead. */
-@media (min-width: 1250px) and (min-height: 601px) and (max-height: 840px) {
+@media (min-width: 1000px) and (min-height: 601px) and (max-height: 840px) {
   .dock:has(.route-panel) {
     left: calc(292px + 2 * var(--gap) + env(safe-area-inset-left));
   }
 }
 
-/* Where it is not that wide, the readout leaves out its hint and names the station as a phone does. */
-@media (min-width: 721px) and (max-width: 1249px) and (min-height: 601px) and (max-height: 840px) {
+/* Where it is not that wide, the readout keeps to the reading, the measurement and the way to the place,
+   and names the station as a phone does. */
+@media (min-width: 721px) and (max-width: 999px) and (min-height: 601px) and (max-height: 840px) {
   .app:has(.route-panel) .readout-hint,
+  .app:has(.route-panel) .readout-note,
+  .app:has(.route-panel) .readout-stats,
   .app:has(.route-panel) .measured-wide {
     display: none;
+  }
+
+  .app:has(.route-panel) .readout-go {
+    margin-top: 6px;
+    padding-top: 6px;
   }
 
   .app:has(.route-panel) .readout-measured small {
@@ -1888,7 +1963,8 @@
     margin: 0;
   }
 
-  .app:has(.route-panel) .measured-narrow {
+  .app:has(.route-panel) .measured-narrow,
+  .app:has(.route-panel) .measured-joint {
     display: inline;
   }
 }
@@ -1904,6 +1980,16 @@
   .pill-button {
     height: 44px;
     padding: 0 16px;
+  }
+
+  .check-box {
+    height: 44px;
+    padding: 0 6px;
+  }
+
+  .check-box i {
+    width: 22px;
+    height: 22px;
   }
 
   .segmented button {

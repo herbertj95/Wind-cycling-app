@@ -13,7 +13,8 @@ import { STALE_MS } from './utils/windStore';
 import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds, stepOf } from './utils/lattice';
 import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
 import { analyseRoute, bestWindows, retracesItself, scanDepartures } from './utils/routeAnalysis';
-import { parseGpxData, reverseRoute } from './utils/gpxParser';
+import { calculateDistance, parseGpxData, reverseRoute } from './utils/gpxParser';
+import { ROUTE_MAX_KM, RoutingError, fetchBikeRoute } from './utils/routing';
 import { darkChecks, isRidingLight } from './utils/sun';
 import { CALM_KMH } from './utils/wind';
 import { MAP_THEMES, effectColor, routeGradient } from './utils/mapStyle';
@@ -29,6 +30,7 @@ const THEME_KEY = 'wind-theme';
 const VIEW_KEY = 'wind-view-v1';
 const FOCUS_KEY = 'wind-focus-v1';
 const FOLDED_KEY = 'wind-folded-v1';
+const ROUND_TRIP_KEY = 'wind-round-trip-v1';
 const NARROW_SCREEN = 720;
 // ms between rider steps at 1x: a 600-point route plays in a little over a minute
 const RIDE_TICK_MS = 120;
@@ -36,6 +38,10 @@ const RIDE_TICK_MS = 120;
 const GEO_PRECISE = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
 const GEO_QUICK = { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 };
 const GEO_TIMEOUT = 3;
+// A position fix is the start of a route as it is while this fresh; an older one only when a new fix cannot
+// be had, and one older than the second limit not at all
+const FIX_FRESH_MS = 2 * 60000;
+const FIX_USABLE_MS = 30 * 60000;
 const PLACES_MENU_ID = 'places-menu';
 const ROUTES_MENU_ID = 'routes-menu';
 
@@ -133,6 +139,15 @@ export default function App() {
   const [focus, setFocus] = useState(() => initialFocus(places));
   const [user, setUser] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
+  // a route being asked for to the place in focus ({ id, key } of the request, null for none), and whether it comes back
+  const [routing, setRouting] = useState(null);
+  const [roundTrip, setRoundTrip] = useState(() => {
+    try {
+      return localStorage.getItem(ROUND_TRIP_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const [route, setRoute] = useState(null);
   const [riderIdx, setRiderIdx] = useState(0);
@@ -163,6 +178,10 @@ export default function App() {
   // true once the user (or a successful start-up GPS fix) has decided what the map shows
   const viewClaimed = useRef(false);
   const loadId = useRef(0);
+  // cancels the route being found, when something else is opened meanwhile
+  const routeAbort = useRef(null);
+  // when the user's position was last fixed
+  const userAt = useRef(0);
   const trackCount = useRef(0);
   const riderIdxRef = useRef(0);
   // counts the times the rider was placed by hand or by opening a route, see the playback below
@@ -219,6 +238,8 @@ export default function App() {
     return { id: place.id, lat: place.lat, lng: place.lng, title: place.name, place: place.label || place.name, note: place.desc || place.region, zone: place.zone };
   }, [focus, riderPoint, route, user, places]);
   const focusedPlaceId = focusPlace?.id ?? null;
+  // what tells the place in focus from any other, for what is asked about it; null for the rider on a route
+  const focusKey = focus.type === 'rider' ? null : focusedPlaceId ? `place:${focusedPlaceId}` : focus.type === 'pin' ? `pin:${focus.lat},${focus.lng}` : 'me';
 
   // The time bar describes one fixed place. While following the rider that place is the start of the
   // route, so the bars answer "when should I leave" and do not change with every step of the ride.
@@ -450,7 +471,12 @@ export default function App() {
     };
   }), [places, wind, shownTime, focusedPlaceId]);
 
-  const pin = useMemo(() => (focus.type === 'pin' ? { lat: focus.lat, lng: focus.lng } : null), [focus]);
+  const pin = useMemo(() => {
+    if (focus.type === 'pin') return { lat: focus.lat, lng: focus.lng };
+    // the point a route was made to stays marked while that route is ridden
+    if (focus.type === 'rider' && route?.routedTo?.pinned) return { lat: route.routedTo.lat, lng: route.routedTo.lng };
+    return null;
+  }, [focus, route]);
 
   const series = useMemo(() => {
     const hours = [];
@@ -615,21 +641,30 @@ export default function App() {
   };
 
   // ----- route -----
-  const openRoute = useCallback((parsed) => {
+  // Only the route asked for last is opened, however the downloads happen to finish: each asking gets a
+  // number, and a route being found for the one before is given up.
+  const nextLoad = useCallback(() => {
+    routeAbort.current?.abort();
+    routeAbort.current = null;
+    return ++loadId.current;
+  }, []);
+
+  // `back` is where the readout goes when the route is closed: the place the route was made to, or what
+  // was in focus when it opened
+  const openRoute = useCallback((parsed, back = null) => {
     viewClaimed.current = true;
     rideRun.current++;
     // `track` tells the map one opened route from another, whichever way round it is ridden
     setRoute({ ...parsed, track: ++trackCount.current });
     setRiderIdx(0);
     setRidePlaying(false);
-    setFocus(toRider);
+    setFocus((prev) => (back ? { type: 'rider', back } : toRider(prev)));
     setRouteError(null);
     closeMenu(routesButtonRef);
   }, [closeMenu]);
 
   const loadPreset = useCallback(async (preset) => {
-    // only the route asked for last is opened, however the downloads happen to finish
-    const id = ++loadId.current;
+    const id = nextLoad();
     try {
       const response = await fetch(`${import.meta.env.BASE_URL}routes/${preset.filename}`);
       if (!response.ok) throw new Error(`Could not load ${preset.name}.`);
@@ -640,10 +675,10 @@ export default function App() {
       if (id !== loadId.current) return;
       setRouteError(err instanceof TypeError ? `Could not load ${preset.name}. Check your connection.` : err.message);
     }
-  }, [openRoute]);
+  }, [openRoute, nextLoad]);
 
   const loadFile = useCallback(async (file) => {
-    const id = ++loadId.current;
+    const id = nextLoad();
     if (!/\.gpx$/i.test(file.name)) {
       setRouteError('Only .gpx files can be opened.');
       setMenu('routes');
@@ -657,7 +692,7 @@ export default function App() {
       setRouteError(err.message || 'Could not read this GPX file.');
       setMenu('routes');
     }
-  }, [openRoute]);
+  }, [openRoute, nextLoad]);
 
   const clearRoute = () => {
     rideRun.current++;
@@ -747,8 +782,95 @@ export default function App() {
     };
   }, [loadFile]);
 
+  // ----- a route to the place in focus -----
+  // Where the rider is: the last fix while it is fresh, otherwise a new one, and failing that the last fix
+  // while it is not too old. Rejects with what to tell the user.
+  const whereAmI = () => new Promise((resolve, reject) => {
+    const age = Date.now() - userAt.current;
+    const held = user && age < FIX_USABLE_MS ? user : null;
+    if (held && age < FIX_FRESH_MS) {
+      resolve(held);
+      return;
+    }
+    if (!navigator.geolocation) {
+      if (held) resolve(held);
+      else reject(new Error('This device does not share its location, so there is no start for the route.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const here = { lat: position.coords.latitude, lng: position.coords.longitude };
+        userAt.current = Date.now();
+        setUser(here);
+        resolve(here);
+      },
+      (error) => {
+        if (held) resolve(held);
+        else {
+          reject(new Error(error.code === GEO_TIMEOUT
+            ? 'Still looking for your position. Try again in a moment.'
+            : 'Could not get your location, which the route would start from. Check that location is switched on.'));
+        }
+      },
+      GEO_PRECISE,
+    );
+  });
+
+  // A road-bike route from where the rider is to the place in focus, by the roads a routing service picks,
+  // opened like a GPX file: there, or there and back.
+  const routeHere = async () => {
+    if (!focusPlace || focusKey === null || routing?.key === focusKey) return;
+    viewClaimed.current = true;
+    const id = nextLoad();
+    const controller = new AbortController();
+    routeAbort.current = controller;
+    setRouting({ id, key: focusKey });
+    const to = { lat: focusPlace.lat, lng: focusPlace.lng };
+    // the route is to this point, whatever is tapped while it is being found: the readout comes back to it
+    const back = focus;
+    const name = roundTrip
+      ? `${focusPlace.place[0].toUpperCase()}${focusPlace.place.slice(1)} and back`
+      : `To ${focusPlace.place}`;
+    try {
+      const from = await whereAmI();
+      if (controller.signal.aborted) return;
+      // the start is only ever one place: a ride that leaves from where the map was tapped is not one
+      if (calculateDistance(from.lat, from.lng, to.lat, to.lng) < 0.05) throw new Error('You are there already.');
+      const { gpx, by } = await fetchBikeRoute(roundTrip ? [from, to, from] : [from, to], { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      let parsed;
+      try {
+        parsed = parseGpxData(gpx, name);
+      } catch {
+        // a track of no length (both ends on the same spot of the road): no route, not a bad file
+        throw new RoutingError('none');
+      }
+      parsed.routedBy = by;
+      parsed.routedTo = { ...to, pinned: focus.type === 'pin' };
+      openRoute(parsed, back);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      notify(error.message || 'No route could be made.');
+    } finally {
+      if (routeAbort.current === controller) routeAbort.current = null;
+      setRouting((current) => (current?.id === id ? null : current));
+    }
+  };
+
+  const toggleRoundTrip = () => {
+    setRoundTrip((on) => {
+      try {
+        localStorage.setItem(ROUND_TRIP_KEY, String(!on));
+      } catch {
+        // the choice just will not be remembered
+      }
+      return !on;
+    });
+  };
+
   // ----- location -----
   const showPosition = useCallback((lat, lng, onStart) => {
+    userAt.current = Date.now();
     setUser({ lat, lng });
     // a slow start-up fix must not pull the map away from what the user has opened meanwhile
     if (onStart && viewClaimed.current) return;
@@ -900,10 +1022,18 @@ export default function App() {
   const colors = MAP_THEMES[theme];
   // the place in focus can be saved, or removed if it already is one; the rider on a route is neither
   const savable = followingRider || !focusPlace ? null : {
-    key: focusedPlaceId ? `place:${focusedPlaceId}` : focus.type === 'pin' ? `pin:${focus.lat},${focus.lng}` : 'me',
+    key: focusKey,
     saved: focusedPlaceId !== null,
     name: focus.type === 'pin' ? focus.name : null,
   };
+  // a route can be asked for to a place or a pinned point, not to where the rider is or to the rider on a route
+  const go = savable && focus.type !== 'me' ? {
+    busy: routing !== null && routing.key === focusKey,
+    roundTrip,
+    maxKm: ROUTE_MAX_KM,
+    onGo: routeHere,
+    onToggleRoundTrip: toggleRoundTrip,
+  } : null;
 
   return (
     <div className="app">
@@ -942,6 +1072,7 @@ export default function App() {
         stale={readingStale}
         quiet={isRiding || forecastPlaying}
         place={savable}
+        go={go}
         measured={measured}
         onSave={saveFocus}
         onRemove={removeFocus}

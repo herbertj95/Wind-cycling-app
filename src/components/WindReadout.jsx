@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookmarkSimple, CaretDown, CaretUp, Drop, Gauge, WifiSlash } from '@phosphor-icons/react';
+import { BookmarkSimple, CaretDown, CaretUp, Check, Drop, Gauge, NavigationArrow, WifiSlash } from '@phosphor-icons/react';
 import WindDial from './WindDial';
 import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees } from '../utils/wind';
 import { describeRain, formatRain, isWet } from '../utils/rain';
@@ -32,6 +32,8 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
  * - stale: the forecast being shown is due for renewal and could not be renewed
  * - place: what can be done with the place in focus, or null when it cannot be saved (the rider on a route):
  *   { key, saved, name }. `name` is the name it would be saved under when it already has one.
+ * - go: a route can be asked for to the place in focus: { busy, roundTrip, onGo, onToggleRoundTrip }, or null
+ *   (where the rider is, or the rider on a route). `busy` while one is being found.
  * - measured: what the nearest weather station last measured, or null: { name, km, clock, speed, from,
  *   forecast }, with `from` null for a wind without a direction and `forecast` the km/h the forecast
  *   gave for that station and hour, or null
@@ -39,7 +41,7 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
  * - collapsed: the reading is shown on one line, to leave the map free. It only folds while there is a
  *   reading: a message about a missing forecast is always shown whole.
  */
-export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, measured, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
+export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, go, measured, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
   // the key of the place whose name is being typed; a different place in focus closes the form by itself
   const [namingKey, setNamingKey] = useState(null);
   const [name, setName] = useState('');
@@ -217,17 +219,14 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
                 {station.verdict === 'as forecast' && ', as forecast'}
                 {station.verdict && station.verdict !== 'as forecast' && (
                   <>
-                    <span className="measured-wide">, {station.verdict} (forecast {Math.round(measured.forecast)})</span>
-                    <span className="measured-narrow">, forecast {Math.round(measured.forecast)}</span>
+                    <span className="measured-wide">, {station.verdict} (forecast {Math.round(measured.forecast)} km/h)</span>
+                    <span className="measured-narrow">, forecast {Math.round(measured.forecast)} km/h</span>
                   </>
                 )}
+                {/* where the station stands: on its own line, or after a dot where the line runs on */}
                 <small>
-                  <span className="measured-narrow"> · </span>
-                  <span className="measured-wide">{measured.name}, </span>
-                  {station.km}
-                  <span className="measured-wide"> away. Source: </span>
-                  <span className="measured-narrow">, </span>
-                  IPMA
+                  <span className="measured-joint"> · </span>
+                  IPMA station <span className="measured-wide">{measured.name}, </span>{station.km} away
                 </small>
               </span>
             </p>
@@ -260,6 +259,21 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
             {updatedAt && !stale && ` Forecast updated ${updatedAt}.`}
           </p>
         </>
+      )}
+
+      {/* a ride to this place from where the rider is, by the roads a routing service picks for a road bike */}
+      {go && status !== 'empty' && (
+        <div className="readout-go">
+          <button type="button" className="pill-button" onClick={go.onGo} disabled={go.busy} aria-busy={go.busy}>
+            <NavigationArrow size={15} weight="fill" aria-hidden="true" />
+            <span>{go.busy ? 'Finding a route…' : 'Route here'}</span>
+          </button>
+          <label className="check-box" title={go.roundTrip ? 'A ride there and back' : 'A ride there only'}>
+            <input type="checkbox" checked={go.roundTrip} onChange={go.onToggleRoundTrip} />
+            <i aria-hidden="true">{go.roundTrip && <Check size={13} weight="bold" />}</i>
+            <span>and back</span>
+          </label>
+        </div>
       )}
 
       {stale && hasReading && (
