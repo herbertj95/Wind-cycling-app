@@ -729,7 +729,7 @@ describe('analyseRoute rain', () => {
 
   it('finds a dry ride dry, with nothing to add', () => {
     const result = analyseRoute(northbound(), hours(hour(), hour(), hour(), hour()), 0, 25);
-    expect(result.rain).toEqual({ wetKm: 0, max: 0, wetChance: 0, chance: 0, known: true, wet: false });
+    expect(result.rain).toEqual({ wetKm: 0, max: 0, wetChance: NaN, chance: 0, known: true, wet: false });
     expect(result.rainNote).toBeNull();
     expect(result.wind[10].rain).toBe(0);
     expect(result.wind[10].rainChance).toBe(0);
@@ -743,7 +743,7 @@ describe('analyseRoute rain', () => {
     expect(result.rain.wetChance).toBeCloseTo(80, 9);
     expect(result.wind[25].rain).toBeCloseTo(1.2, 9);
     expect(result.wind[25].rainChance).toBeCloseTo(80, 9);
-    expect(result.rainNote).toBe('Rain all the way, up to 1.2 mm/h (80% chance).');
+    expect(result.rainNote).toBe('80% chance of rain all the way, up to 1.2 mm/h.');
   });
 
   it('counts the rain where the rider is when it falls, not at the start', () => {
@@ -756,9 +756,9 @@ describe('analyseRoute rain', () => {
     expect(result.wind[25].rain).toBeCloseTo(3, 9);
     expect(result.rain.wetKm).toBeCloseTo(26, 6);
     expect(result.rain.max).toBeCloseTo(3, 9);
-    expect(result.rainNote).toBe('Rain on 26 km of the ride, up to 3.0 mm/h (90% chance).');
+    expect(result.rainNote).toBe('90% chance of rain on 26 km of the ride, up to 3.0 mm/h.');
     // leaving an hour later, the whole ride is in it
-    expect(analyseRoute(northbound(), forecast, 1, 25).rainNote).toBe('Rain all the way, up to 3.0 mm/h (90% chance).');
+    expect(analyseRoute(northbound(), forecast, 1, 25).rainNote).toBe('90% chance of rain all the way, up to 3.0 mm/h.');
     // riding it in 50 minutes, the rider is home before it starts
     expect(analyseRoute(northbound(), forecast, 0, 60).rain.wetKm).toBe(0);
   });
@@ -768,14 +768,14 @@ describe('analyseRoute rain', () => {
     const result = analyseRoute(northbound(), forecast, 0, 25);
     expect(result.rain.max).toBeCloseTo(8, 9);
     expect(result.rain.wetChance).toBeCloseTo(70, 9);
-    expect(result.rainNote).toBe('Rain all the way, up to 8.0 mm/h (70% chance).');
+    expect(result.rainNote).toBe('70% chance of rain all the way, up to 8.0 mm/h.');
   });
 
-  it('calls rain with little chance behind it only possible', () => {
+  it('leads with the chance, however small, and goes without when none is given', () => {
     const shower = hour({ rain: 0.4, rainChance: 8 });
-    expect(analyseRoute(northbound(), hours(shower, shower, shower, shower), 0, 25).rainNote).toBe('Rain possible all the way, up to 0.4 mm/h (8% chance).');
+    expect(analyseRoute(northbound(), hours(shower, shower, shower, shower), 0, 25).rainNote).toBe('8% chance of rain all the way, up to 0.4 mm/h.');
     const later = analyseRoute(northbound(), hours(hour(), hour(), shower, shower), 0, 25);
-    expect(later.rainNote).toBe('Rain possible on 26 km of the ride, up to 0.4 mm/h (8% chance).');
+    expect(later.rainNote).toBe('8% chance of rain on 26 km of the ride, up to 0.4 mm/h.');
     // an amount with no chance given at all is taken as forecast
     const unsure = hour({ rain: 0.4, rainChance: undefined });
     expect(analyseRoute(northbound(), hours(unsure, unsure, unsure, unsure), 0, 25).rainNote).toBe('Rain all the way, up to 0.4 mm/h.');
@@ -815,7 +815,7 @@ describe('analyseRoute rain', () => {
     expect(Number.isNaN(result.wind[11].rain)).toBe(true);
     // only the five segments with a forecast count as ridden in the rain
     expect(result.rain.wetKm).toBeCloseTo(5 * step, 6);
-    expect(result.rainNote).toBe('Rain all the way, up to 2.0 mm/h (80% chance).');
+    expect(result.rainNote).toBe('80% chance of rain all the way, up to 2.0 mm/h.');
   });
 });
 
