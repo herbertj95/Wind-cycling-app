@@ -153,7 +153,8 @@ export default function App() {
   const [riderIdx, setRiderIdx] = useState(0);
   const [ridePlaying, setRidePlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [rideKmh, setRideKmh] = useState(25);
+  // the speed a plan starts from: an easy road ride
+  const [rideKmh, setRideKmh] = useState(20);
 
   // which toolbar menu is open: 'places', 'routes' or null
   const [menu, setMenu] = useState(null);

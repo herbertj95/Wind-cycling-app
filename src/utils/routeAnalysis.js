@@ -270,11 +270,10 @@ function buildOrderNote(order, tone) {
 function buildRainNote(rain, coveredKm) {
   if (!rain.known) return null;
   if (rain.wet) {
-    // an amount with little chance behind it is only possible (see describeRain)
-    const rainWord = rain.wetChance > 0 && rain.wetChance < LIKELY_PERCENT ? 'Rain possible' : 'Rain';
+    // the chance leads, when the forecast gives one: "80% chance of rain on 15 km of the ride"
+    const rainWord = Number.isFinite(rain.wetChance) ? `${round(rain.wetChance)}% chance of rain` : 'Rain';
     const where = rain.wetKm >= coveredKm * 0.95 ? `${rainWord} all the way` : `${rainWord} on ${Math.max(1, round(rain.wetKm))} km of the ride`;
-    const chance = rain.wetChance > 0 ? ` (${round(rain.wetChance)}% chance)` : '';
-    return `${where}, up to ${formatRain(rain.max)} mm/h${chance}.`;
+    return `${where}, up to ${formatRain(rain.max)} mm/h.`;
   }
   return rain.chance >= LIKELY_PERCENT ? `Up to a ${round(rain.chance)}% chance of rain on the way.` : null;
 }
@@ -289,7 +288,7 @@ function buildRainNote(rain, coveredKm) {
  * `cross` holds everything that is neither a noticeable head nor tailwind.
  * Stretches without a forecast are counted in `outsideKm` and in nothing else.
  * `rain` is what the forecast says about getting wet: the km ridden in rain (`wetKm`), the heaviest
- * rain met (`max`, mm an hour) with its chance (`wetChance`), and the highest chance of rain anywhere
+ * rain met (`max`, mm an hour) with its chance (`wetChance`, NaN when none is given), and the highest chance of rain anywhere
  * on the way (`chance`). `known` is false when the forecast along the route says nothing about rain.
  * `wet` says whether that is a real stretch of road. `rainNote` puts it in a sentence, or is null on a dry ride.
  * `against` and `behind` are the wind along the road averaged over the ride, in km/h: what blows
@@ -320,7 +319,8 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25, turn = ro
   let costSum = 0;
   let rainSum = 0;
   let gustSum = 0;
-  const rain = { wetKm: 0, max: 0, wetChance: 0, chance: 0, known: false, wet: false };
+  // wetChance stays NaN until a wet point carries a chance
+  const rain = { wetKm: 0, max: 0, wetChance: NaN, chance: 0, known: false, wet: false };
   // the way out and the way home: the kilometres with a forecast, and the wind along the road over them
   const parts = [{ km: 0, head: 0 }, { km: 0, head: 0 }];
 
@@ -366,7 +366,7 @@ export function analyseRoute(route, forecast, startHour, rideKmh = 25, turn = ro
     if (isWet(wet)) {
       rain.wetKm += segKm;
       if (wet > rain.max) rain.max = wet;
-      if (wetChance > rain.wetChance) rain.wetChance = wetChance;
+      if (!(wetChance <= rain.wetChance)) rain.wetChance = wetChance;
     }
 
     return { speed: w.speed, gust: w.gust, from: w.from, temp: w.temp, feels: w.feels, rain: wet, rainChance: wetChance, head, cross, effect, outside: false };
