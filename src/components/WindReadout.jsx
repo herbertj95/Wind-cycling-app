@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookmarkSimple, CaretDown, CaretUp, Check, Drop, Gauge, NavigationArrow, WifiSlash } from '@phosphor-icons/react';
+import { BookmarkSimple, CaretDown, CaretUp, Check, Drop, Gauge, NavigationArrow, WifiSlash, X } from '@phosphor-icons/react';
 import WindDial from './WindDial';
 import { CALM_KMH, beaufortLabel, compassPoint, describeRiderWind, wholeDegrees } from '../utils/wind';
 import { describeRain, formatRain, isWet } from '../utils/rain';
@@ -32,6 +32,7 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
  * - stale: the forecast being shown is due for renewal and could not be renewed
  * - place: what can be done with the place in focus, or null when it cannot be saved (the rider on a route):
  *   { key, saved, name }. `name` is the name it would be saved under when it already has one.
+ * - onDrop: drops the pinned point in focus, or null when the focus is not a pin
  * - go: a route can be asked for to the place in focus: { busy, roundTrip, onGo, onToggleRoundTrip }, or null
  *   (where the rider is, or the rider on a route). `busy` while one is being found.
  * - measured: what the nearest weather station last measured, or null: { name, km, clock, speed, from,
@@ -41,7 +42,7 @@ const degrees = (value, unit = '') => (Number.isFinite(value) ? `${Math.round(va
  * - collapsed: the reading is shown on one line, to leave the map free. It only folds while there is a
  *   reading: a message about a missing forecast is always shown whole.
  */
-export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, go, measured, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
+export default function WindReadout({ ref, title, shortTitle, when, reading, rider, note, status, problem, updatedAt, stale, quiet, place, onDrop, go, measured, onSave, onRemove, onRetry, collapsed, onToggleCollapsed }) {
   // the key of the place whose name is being typed; a different place in focus closes the form by itself
   const [namingKey, setNamingKey] = useState(null);
   const [name, setName] = useState('');
@@ -131,10 +132,15 @@ export default function WindReadout({ ref, title, shortTitle, when, reading, rid
 
   return (
     <section ref={ref} className="readout panel">
-      <div className={`readout-top${place ? ' can-save' : ''}${hasReading ? ' can-fold' : ''}`}>
+      <div className={`readout-top${place ? ' can-save' : ''}${hasReading ? ' can-fold' : ''}${onDrop ? ' can-drop' : ''}`}>
         <h1>{title}</h1>
         {when && <span>{when}</span>}
         {foldButton}
+        {onDrop && (
+          <button type="button" className="icon-button readout-drop" aria-label="Drop the pin" title="Drop the pin" onClick={onDrop}>
+            <X size={17} aria-hidden="true" />
+          </button>
+        )}
         {place && (
           <button
             type="button"

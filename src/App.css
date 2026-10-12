@@ -226,6 +226,10 @@
   padding-right: 60px;
 }
 
+.readout-top.can-save.can-fold.can-drop {
+  padding-right: 90px;
+}
+
 .readout h1 {
   min-width: 0;
   font-size: 16px;
@@ -243,7 +247,8 @@
 
 /* the buttons keep the top right corner, whatever the name and the time do */
 .readout-save,
-.readout-fold {
+.readout-fold,
+.readout-drop {
   position: absolute;
   top: -8px;
   right: -8px;
@@ -251,6 +256,15 @@
 }
 
 .readout-top.can-fold .readout-save {
+  right: 22px;
+}
+
+/* the pin's own close, leftmost of the three */
+.readout-top.can-fold .readout-drop {
+  right: 56px;
+}
+
+.readout-top:not(.can-fold) .readout-drop {
   right: 22px;
 }
 
@@ -2029,9 +2043,33 @@
     margin-bottom: -14px;
   }
 
-  .readout-save {
+  .readout-save,
+  .readout-drop {
     top: -12px;
     right: -11px;
+  }
+
+  /* 44 px buttons, 4 px apart */
+  .readout-top.can-fold .readout-save,
+  .readout-top:not(.can-fold) .readout-drop {
+    right: 37px;
+  }
+
+  .readout-top.can-fold .readout-drop {
+    right: 85px;
+  }
+
+  .readout-top.can-save,
+  .readout-top.can-fold {
+    padding-right: 36px;
+  }
+
+  .readout-top.can-save.can-fold {
+    padding-right: 84px;
+  }
+
+  .readout-top.can-save.can-fold.can-drop {
+    padding-right: 132px;
   }
 
   .timebar-actions .icon-button {

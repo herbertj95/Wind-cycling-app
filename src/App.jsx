@@ -9,6 +9,7 @@ import PlacesMenu from './components/PlacesMenu';
 import { useWind, useNow } from './hooks/useWind';
 import { useObserved } from './hooks/useObserved';
 import { useSystemBars } from './hooks/useSystemBars';
+import { useBackButton } from './hooks/useBackButton';
 import { STALE_MS } from './utils/windStore';
 import { inBounds, levelForBounds, nodesAlong, nodesAround, nodesInBounds, stepOf } from './utils/lattice';
 import { PLACES_KEY, loadPlaces, makePlace, savePlaces } from './utils/places';
@@ -184,6 +185,8 @@ export default function App() {
   // when the user's position was last fixed
   const userAt = useRef(0);
   const trackCount = useRef(0);
+  // what was in focus before a point was pinned, to go back to when the pin is dropped
+  const beforePin = useRef(null);
   const riderIdxRef = useRef(0);
   // counts the times the rider was placed by hand or by opening a route, see the playback below
   const rideRun = useRef(0);
@@ -597,6 +600,7 @@ export default function App() {
   const showResult = (result) => {
     viewClaimed.current = true;
     closeMenu(placesButtonRef);
+    if (focus.type !== 'pin') beforePin.current = focus;
     setFocus({
       type: 'pin',
       lat: result.lat,
@@ -927,8 +931,21 @@ export default function App() {
       return;
     }
     viewClaimed.current = true;
-    setFocus({ type: 'pin', lat, lng, name: null, region: null, zone: null });
+    setFocus((prev) => {
+      if (prev.type !== 'pin') beforePin.current = prev;
+      return { type: 'pin', lat, lng, name: null, region: null, zone: null };
+    });
   }, [menu, closeMenu]);
+
+  // the pin is dropped: the readout goes back to what it was on before, and the map stays where it is
+  const dropPin = useCallback(() => {
+    const before = beforePin.current;
+    const back = before && before.type !== 'rider' && (before.type !== 'place' || places.some((p) => p.id === before.id)) && (before.type !== 'me' || user)
+      ? before
+      : { type: 'place', id: places[0]?.id };
+    beforePin.current = null;
+    setFocus(back);
+  }, [places, user]);
 
   const handleSpot = (id) => {
     const place = places.find((p) => p.id === id);
@@ -985,6 +1002,29 @@ export default function App() {
 
   // on a phone, the clock and the icons of the status bar are drawn to be read on the map shown
   useSystemBars(theme);
+
+  // The back button of the phone undoes the last thing on the screen, one step at a time: a menu, the
+  // ride playing, the route, a pinned point, a folded panel opened again. Only with nothing left does
+  // the app go to the background.
+  useBackButton(() => {
+    if (menu) {
+      closeMenu();
+      return true;
+    }
+    if (isRiding) {
+      toggleRide();
+      return true;
+    }
+    if (route) {
+      clearRoute();
+      return true;
+    }
+    if (focus.type === 'pin') {
+      dropPin();
+      return true;
+    }
+    return false;
+  });
 
   // the place or point in focus is where the readout starts next time
   useEffect(() => {
@@ -1073,6 +1113,7 @@ export default function App() {
         stale={readingStale}
         quiet={isRiding || forecastPlaying}
         place={savable}
+        onDrop={focus.type === 'pin' ? dropPin : null}
         go={go}
         measured={measured}
         onSave={saveFocus}
