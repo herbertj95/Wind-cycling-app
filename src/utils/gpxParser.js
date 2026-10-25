@@ -344,6 +344,12 @@ export const PRESET_ROUTES = [
     description: 'The Marginal coast road from Lisbon to Cascais and back.'
   },
   {
+    id: 'lisboa-povoa',
+    name: 'Lisboa–Póvoa',
+    filename: 'Lisboa-Povoa.gpx',
+    description: 'Flat ride north along the Tagus to Póvoa de Santa Iria and back.'
+  },
+  {
     id: 'seixal-arrabida',
     name: 'Seixal–Arrábida',
     filename: 'Seixal-Arrabida.gpx',
